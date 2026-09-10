@@ -66,7 +66,7 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 # ============================
-# THEME-AWARE CSS (works with Streamlit light/dark toggle)
+# THEME-AWARE CSS
 # ============================
 st.markdown(
     """
@@ -76,7 +76,7 @@ st.markdown(
 
 * { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
 
-/* ---------- LIGHT (default) ---------- */
+/* LIGHT THEME */
 .main-header {
     font-size: 2.05rem; font-weight: 800; letter-spacing: -0.03em;
     color: #1e3a8a; margin: 0; line-height: 1.2;
@@ -135,7 +135,7 @@ st.markdown(
 [data-testid="stMetricValue"] { font-weight: 700 !important; }
 .stAlert { border-radius: 10px !important; }
 
-/* ---------- DARK MODE ---------- */
+/* DARK THEME OVERRIDES */
 html.theme-dark .main-header,
 [data-theme="dark"] .main-header,
 .stApp[data-theme="dark"] .main-header { color: #facc15 !important; }
@@ -276,7 +276,10 @@ if not st.session_state.authenticated:
                     process_authentication(auth_mode, email, password, company)
                 )
                 if auth_mode == "Register Account":
-                    st.success(response) if success else st.error(response)
+                    if success:
+                        st.success(response)
+                    else:
+                        st.error(response)
                 else:
                     if success:
                         st.session_state.authenticated = True
@@ -287,7 +290,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================
-# MAIN HEADER
+# MAIN HEADER (Safely rendered only after authentication)
 # ============================
 h1, h2 = st.columns([1, 11])
 with h1:
@@ -297,9 +300,9 @@ with h2:
         f"""
         <div class="main-header" style="margin-top:0.35rem;">PetroNexa</div>
         <div class="sub-header" style="margin-bottom:0.4rem; padding-bottom:0.5rem;">
-            <i class="fas fa-user-circle"></i> {st.session_state.user_info["username"]}
+            <i class="fas fa-user-circle"></i> {st.session_state.user_info['username']}
             &nbsp;·&nbsp;
-            <i class="fas fa-building"></i> {st.session_state.user_info["company"]}
+            <i class="fas fa-building"></i> {st.session_state.user_info['company']}
         </div>
         """,
         unsafe_allow_html=True,
@@ -377,6 +380,7 @@ with st.sidebar:
     st.divider()
     if st.button("Log Out", use_container_width=True):
         st.session_state.authenticated = False
+        st.session_state.user_info = None
         st.rerun()
 
 # ============================
@@ -714,7 +718,7 @@ with tab4:
         tail_dens = st.number_input("Tail Slurry Density (ppg)", value=15.8, step=0.1)
         spacer_dens = st.number_input("Spacer Density (ppg)", value=11.0, step=0.1)
         disp_dens = st.number_input("Displacement Fluid Density (ppg)", value=10.0, step=0.1)
-        tail_length = st.number_input("Tail Spurry Length (ft)", value=500.0, step=50.0)
+        tail_length = st.number_input("Tail Slurry Length (ft)", value=500.0, step=50.0)
         bht = st.number_input("Bottom Hole Temperature (°F)", value=180.0, step=5.0)
 
     st.markdown("---")
