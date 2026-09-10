@@ -1,7 +1,6 @@
-# pdf_generator.py
 import io
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from reportlab.lib.pagesizes import letter
@@ -23,7 +22,7 @@ class NumberedCanvas(canvas.Canvas):
         super().__init__(*args, **kwargs)
         self._saved_page_states = []
 
-        # Locate logo.png
+        # Locate logo.png safely across working directories
         self.logo_image = None
         script_dir = os.path.dirname(os.path.abspath(__file__))
         cwd = os.getcwd()
@@ -57,7 +56,6 @@ class NumberedCanvas(canvas.Canvas):
     def _draw_watermark(self):
         """Centered semi-transparent logo watermark."""
         if self.logo_image is None:
-            # Text fallback
             self.saveState()
             self.setFont("Helvetica-Bold", 42)
             self.setFillColor(colors.HexColor("#94A3B8"))
@@ -107,15 +105,11 @@ class NumberedCanvas(canvas.Canvas):
 
     def _draw_page_decorations(self, page_count: int):
         """Watermark + header + footer on every page."""
-        # 1. Watermark first (behind everything)
         self._draw_watermark()
-
         self.saveState()
 
-        # 2. Header logo
         self._draw_header_logo()
 
-        # 3. Header text (pages > 1)
         if self._pageNumber > 1:
             self.setFont("Helvetica-Bold", 8)
             self.setFillColor(colors.HexColor("#64748B"))
@@ -124,7 +118,6 @@ class NumberedCanvas(canvas.Canvas):
             self.setLineWidth(0.6)
             self.line(54, 744, 558, 744)
 
-        # 4. Footer
         self.setStrokeColor(colors.HexColor("#E2E8F0"))
         self.setLineWidth(0.8)
         self.line(54, 42, 558, 42)
@@ -143,25 +136,20 @@ class NumberedCanvas(canvas.Canvas):
 # ============================
 def create_pressure_window_chart() -> Drawing:
     d = Drawing(450, 130)
-    # Background
     d.add(Rect(0, 0, 450, 130, fillColor=colors.HexColor("#F8FAFC"),
                strokeColor=colors.HexColor("#E2E8F0"), strokeWidth=0.8))
 
-    # Grid lines
     for x in range(50, 450, 50):
         d.add(Line(x, 8, x, 122, strokeColor=colors.HexColor("#E2E8F0"), strokeWidth=0.4))
 
-    # Zones
     d.add(Rect(50, 8, 95, 114, fillColor=colors.HexColor("#FEE2E2"), strokeColor=colors.transparent))
     d.add(Rect(305, 8, 95, 114, fillColor=colors.HexColor("#FEE2E2"), strokeColor=colors.transparent))
     d.add(Rect(145, 8, 160, 114, fillColor=colors.HexColor("#DCFCE7"), strokeColor=colors.transparent))
 
-    # ECD line
     d.add(Line(185, 122, 210, 85, strokeColor=colors.HexColor("#2563EB"), strokeWidth=2.2))
     d.add(Line(210, 85, 200, 48, strokeColor=colors.HexColor("#2563EB"), strokeWidth=2.2))
     d.add(Line(200, 48, 230, 8, strokeColor=colors.HexColor("#2563EB"), strokeWidth=2.2))
 
-    # Labels
     d.add(String(58, 108, "Pore Pressure", fontName="Helvetica-Bold", fontSize=7.5,
                  fillColor=colors.HexColor("#991B1B")))
     d.add(String(165, 108, "ECD Operating Window", fontName="Helvetica-Bold", fontSize=7.5,
@@ -193,45 +181,29 @@ def generate_pdf_payload(
 
     styles = getSampleStyleSheet()
 
-    # Modern styles
     title_style = ParagraphStyle(
-        "Title",
-        fontName="Helvetica-Bold",
-        fontSize=20,
-        leading=24,
-        textColor=colors.HexColor("#0F172A"),
-        spaceAfter=2
+        "Title", fontName="Helvetica-Bold", fontSize=20, leading=24,
+        textColor=colors.HexColor("#0F172A"), spaceAfter=2
     )
     subtitle_style = ParagraphStyle(
-        "Subtitle",
-        fontName="Helvetica",
-        fontSize=10.5,
-        leading=14,
-        textColor=colors.HexColor("#2563EB"),
-        spaceAfter=14
+        "Subtitle", fontName="Helvetica", fontSize=10.5, leading=14,
+        textColor=colors.HexColor("#2563EB"), spaceAfter=14
     )
     h1_style = ParagraphStyle(
-        "H1",
-        fontName="Helvetica-Bold",
-        fontSize=11.5,
-        leading=15,
-        textColor=colors.HexColor("#0F172A"),
-        spaceBefore=16,
-        spaceAfter=6
+        "H1", fontName="Helvetica-Bold", fontSize=11.5, leading=15,
+        textColor=colors.HexColor("#0F172A"), spaceBefore=16, spaceAfter=6
     )
     body_style = ParagraphStyle(
-        "Body",
-        fontName="Helvetica",
-        fontSize=8.5,
-        leading=12,
+        "Body", fontName="Helvetica", fontSize=8.5, leading=12,
         textColor=colors.HexColor("#334155")
     )
     bold_body = ParagraphStyle(
-        "BodyBold",
-        fontName="Helvetica-Bold",
-        fontSize=8.5,
-        leading=12,
+        "BodyBold", fontName="Helvetica-Bold", fontSize=8.5, leading=12,
         textColor=colors.HexColor("#1E293B")
+    )
+    header_white_style = ParagraphStyle(
+        "HeaderWhite", fontName="Helvetica-Bold", fontSize=8.5, leading=12,
+        textColor=colors.white
     )
 
     elements = []
@@ -241,6 +213,11 @@ def generate_pdf_payload(
     elements.append(Paragraph("Engineering Technical Compliance Field Report", subtitle_style))
 
     # ---- Metadata ----
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d  %H:%M UTC")
+    report_id = f"PMC-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}"
+    td_val = physics_results.get("total_depth_ft", physics_results.get("well_depth_ft", 0.0))
+    flow_val = physics_results.get("flow_rate_gpm", 0.0)
+
     meta_data = [
         [
             Paragraph("<b>Project Asset</b>", body_style),
@@ -250,7 +227,7 @@ def generate_pdf_payload(
         ],
         [
             Paragraph("<b>Wellbore Depth</b>", body_style),
-            Paragraph(f"{physics_results.get('total_depth_ft', 0.0):,.0f} ft MD", body_style),
+            Paragraph(f"{td_val:,.0f} ft MD", body_style),
             Paragraph("<b>Lead Engineer</b>", body_style),
             Paragraph(engineer_name, body_style),
         ],
@@ -258,13 +235,13 @@ def generate_pdf_payload(
             Paragraph("<b>Operating Client</b>", body_style),
             Paragraph(str(project_metadata.get("company", "Enterprise Hydrocarbons Corp")), body_style),
             Paragraph("<b>Report ID</b>", body_style),
-            Paragraph(f"PMC-{datetime.now().strftime('%Y%m%d-%H%M')}", body_style),
+            Paragraph(report_id, body_style),
         ],
         [
             Paragraph("<b>Flow Rate</b>", body_style),
-            Paragraph(f"{physics_results.get('flow_rate_gpm', 0.0):.0f} GPM", body_style),
+            Paragraph(f"{flow_val:.0f} GPM", body_style),
             Paragraph("<b>Generated</b>", body_style),
-            Paragraph(datetime.now().strftime("%Y-%m-%d  %H:%M"), body_style),
+            Paragraph(now_str, body_style),
         ],
     ]
     t_meta = Table(meta_data, colWidths=[95, 155, 95, 155])
@@ -283,21 +260,26 @@ def generate_pdf_payload(
     severity = diagnostic_results.get("severity", "GREEN")
     if severity == "GREEN":
         status_text = "STABLE OPERATIONAL GRADIENT"
-        status_color = colors.HexColor("#166534")
+        status_color = "#166534"
     elif severity == "YELLOW":
         status_text = "WARNING – ELEVATED"
-        status_color = colors.HexColor("#B45309")
+        status_color = "#B45309"
     else:
         status_text = "CRITICAL BREACH"
-        status_color = colors.HexColor("#991B1B")
+        status_color = "#991B1B"
+
+    diag_text = diagnostic_results.get(
+        "detailed_diagnosis",
+        diagnostic_results.get("message", "Nominal operational parameters confirmed.")
+    )
 
     summary_box = [
         [Paragraph("<b>Well Health Status</b>", body_style),
-         Paragraph(f'<font color="{status_color.hexval()}"><b>{status_text}</b></font>', body_style)],
+         Paragraph(f'<font color="{status_color}"><b>{status_text}</b></font>', body_style)],
         [Paragraph("<b>Matched Hazard</b>", body_style),
          Paragraph(diagnostic_results.get("matched_hazard", "None"), body_style)],
         [Paragraph("<b>AI Diagnosis</b>", body_style),
-         Paragraph(diagnostic_results.get("detailed_diagnosis", "Nominal"), body_style)],
+         Paragraph(diag_text, body_style)],
     ]
     t_summary = Table(summary_box, colWidths=[130, 370])
     t_summary.setStyle(TableStyle([
@@ -313,15 +295,17 @@ def generate_pdf_payload(
 
     # ---- Hydraulics Summary ----
     elements.append(Paragraph("1. Primary Mechanical Hydraulics Summary", h1_style))
-    ecd = physics_results.get("equivalent_circulating_density_ecd_ppg", 0.0)
-    spp = physics_results.get("standpipe_pressure_spp_psi", 0.0)
+    ecd = physics_results.get("ecd_ppg", physics_results.get("equivalent_circulating_density_ecd_ppg", 0.0))
+    spp = physics_results.get("standpipe_pressure_psi", physics_results.get("standpipe_pressure_spp_psi", 0.0))
+    ann_dp = physics_results.get("total_annular_dp_psi", physics_results.get("total_annular_pressure_loss_psi", 0.0))
+    pipe_dp = physics_results.get("total_pipe_dp_psi", physics_results.get("total_pipe_pressure_loss_psi", 0.0))
 
     comp_rows = [
         [
-            Paragraph("<b>Metric Parameter</b>", bold_body),
-            Paragraph("<b>Value</b>", bold_body),
-            Paragraph("<b>Safe Limit</b>", bold_body),
-            Paragraph("<b>Status</b>", bold_body),
+            Paragraph("Metric Parameter", header_white_style),
+            Paragraph("Value", header_white_style),
+            Paragraph("Safe Limit", header_white_style),
+            Paragraph("Status", header_white_style),
         ],
         [
             Paragraph("Equivalent Circulating Density (ECD)", body_style),
@@ -337,13 +321,13 @@ def generate_pdf_payload(
         ],
         [
             Paragraph("Annular Pressure Loss", body_style),
-            Paragraph(f"{physics_results.get('total_annular_pressure_loss_psi', 0.0):.1f} psi", body_style),
+            Paragraph(f"{ann_dp:.1f} psi", body_style),
             Paragraph("Dynamic", body_style),
             Paragraph("PASS", bold_body),
         ],
         [
             Paragraph("Drillstring Pressure Loss", body_style),
-            Paragraph(f"{physics_results.get('total_pipe_pressure_loss_psi', 0.0):.1f} psi", body_style),
+            Paragraph(f"{pipe_dp:.1f} psi", body_style),
             Paragraph("Dynamic", body_style),
             Paragraph("PASS", bold_body),
         ],
@@ -351,13 +335,11 @@ def generate_pdf_payload(
     t_comp = Table(comp_rows, colWidths=[195, 100, 110, 95])
     t_comp.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
         ("TOPPADDING", (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#FFFFFF")),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#FFFFFF"), colors.HexColor("#F8FAFC")]),
     ]))
     elements.extend([t_comp, Spacer(1, 10)])
@@ -371,18 +353,17 @@ def generate_pdf_payload(
     if cementing_results:
         elements.append(Paragraph("3. Cementing Job Summary", h1_style))
         c_data = [
-            [Paragraph("<b>Parameter</b>", bold_body), Paragraph("<b>Value</b>", bold_body)],
-            ["Lead Slurry Volume", f"{cementing_results.get('lead_slurry_volume_bbl', 0.0):.2f} bbl"],
-            ["Tail Slurry Volume", f"{cementing_results.get('tail_slurry_volume_bbl', 0.0):.2f} bbl"],
-            ["Spacer Volume", f"{cementing_results.get('spacer_volume_bbl', 0.0):.2f} bbl"],
-            ["Displacement Volume", f"{cementing_results.get('displacement_volume_bbl', 0.0):.2f} bbl"],
-            ["Recommended Plug Bumping Pressure",
+            [Paragraph("Parameter", header_white_style), Paragraph("Value", header_white_style)],
+            [Paragraph("Lead Slurry Volume", body_style), f"{cementing_results.get('lead_slurry_volume_bbl', 0.0):.2f} bbl"],
+            [Paragraph("Tail Slurry Volume", body_style), f"{cementing_results.get('tail_slurry_volume_bbl', 0.0):.2f} bbl"],
+            [Paragraph("Spacer Volume", body_style), f"{cementing_results.get('spacer_volume_bbl', 0.0):.2f} bbl"],
+            [Paragraph("Displacement Volume", body_style), f"{cementing_results.get('displacement_volume_bbl', 0.0):.2f} bbl"],
+            [Paragraph("Recommended Plug Bumping Pressure", body_style),
              f"{cementing_results.get('recommended_plug_bumping_pressure_psi', 0.0):.1f} psi"],
         ]
         t_cement = Table(c_data, colWidths=[260, 240])
         t_cement.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
             ("TOPPADDING", (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
@@ -392,19 +373,26 @@ def generate_pdf_payload(
         elements.append(t_cement)
         elements.append(Spacer(1, 8))
 
-        elements.append(Paragraph("Suggested Additives", h1_style))
-        for add in cementing_results.get("suggested_additives", []):
-            elements.append(
-                Paragraph(
-                    f"• <b>{add.get('name', '')}</b> ({add.get('category', '')}) – {add.get('description', '')}",
-                    body_style
-                )
-            )
-        elements.append(Spacer(1, 8))
+        additives = cementing_results.get("suggested_additives", [])
+        if additives:
+            elements.append(Paragraph("Suggested Additives", h1_style))
+            for add in additives:
+                if isinstance(add, dict):
+                    name = add.get("name", "Additive")
+                    cat = add.get("category", "General")
+                    desc = add.get("description", "")
+                    elements.append(Paragraph(f"• <b>{name}</b> ({cat}) – {desc}", body_style))
+            elements.append(Spacer(1, 8))
 
     # ---- AI Recommendations & Sign-off ----
     elements.append(Paragraph("4. AI Action Blueprint & Engineering Sign-Off", h1_style))
-    recs = diagnostic_results.get("actionable_recommendations", ["Maintain standard operations."])
+    recs = diagnostic_results.get(
+        "actionable_recommendations",
+        [diagnostic_results.get("recommendation", "Maintain standard operations inside safe pressure window.")]
+    )
+    if isinstance(recs, str):
+        recs = [recs]
+
     for rec in recs:
         elements.append(Paragraph(f"• {rec}", body_style))
 
@@ -429,7 +417,6 @@ def generate_pdf_payload(
     ]))
     elements.append(t_sig)
 
-    # Build
     doc.build(elements, canvasmaker=NumberedCanvas)
     buffer.seek(0)
     return buffer
