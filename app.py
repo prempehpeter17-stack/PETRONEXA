@@ -22,8 +22,21 @@ def get_base64_image(file_path: str) -> str:
         return base64.b64encode(f.read()).decode()
 
 
+# Loop-safe async runner for Streamlit runtime
+def run_async_task(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        return loop.run_until_complete(coro)
+    else:
+        return asyncio.run(coro)
+
+
 logo_base64 = get_base64_image("logo.png")
-asyncio.run(init_db())
+run_async_task(init_db())
 
 # ============================
 # PAGE CONFIG
@@ -259,7 +272,7 @@ if not st.session_state.authenticated:
             if not email or not password:
                 st.error("Please enter both email and password.")
             else:
-                success, response = asyncio.run(
+                success, response = run_async_task(
                     process_authentication(auth_mode, email, password, company)
                 )
                 if auth_mode == "Register Account":
@@ -423,7 +436,7 @@ with tab1:
                     surface_mud_weight_ppg=surface_mw,
                     flow_rate_gpm=flow_rate,
                     total_depth_ft=total_depth,
-                    true_vertical_depth_ft=tvd,          # ★ TVD for correct ECD
+                    true_vertical_depth_ft=tvd,
                     plastic_viscosity_cp=pv,
                     yield_point_lb_100ft2=yp,
                     rheology_model=RheologyModel(rheology),
@@ -505,7 +518,6 @@ with tab1:
                 )
                 st.dataframe(pd.DataFrame(results["segment_breakdown"]), use_container_width=True)
 
-                # Formation integrity check
                 if "gradient_df" in st.session_state and not st.session_state.gradient_df.empty:
                     gdf = st.session_state.gradient_df.copy().apply(pd.to_numeric, errors="coerce").dropna()
                     if not gdf.empty:
@@ -552,7 +564,6 @@ with tab1:
                         except Exception as e:
                             st.warning(f"Could not build gradient profile: {e}")
 
-                # Hole cleaning
                 last_ann_vel = results["segment_breakdown"][-1]["annular_velocity_fpm"]
                 slip = engine.calculate_cuttings_slip_velocity(surface_mw, pv)
                 ratio = last_ann_vel / slip if slip > 0 else 0
