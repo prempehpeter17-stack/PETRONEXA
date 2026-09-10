@@ -296,7 +296,8 @@ async def process_authentication(mode, email_val, password_val, company_val=None
                     username=username_val,
                     email=email_val,
                     hashed_password=hashed_pw,
-                    company_name=(company_val or "Enterprise Hydrocarbons Corp").strip(),
+                    role="drilling_engineer",
+                    company_name=(company_val or "").strip(),
                 )
                 session.add(new_user)
                 await session.commit()
@@ -318,7 +319,8 @@ async def process_authentication(mode, email_val, password_val, company_val=None
                         "id": user.id,
                         "username": user.username,
                         "email": user.email,
-                        "company": user.company_name,
+                        "role": user.role,
+                        "company": user.company_name or "",
                     }
                 return False, "Invalid email or password."
             except Exception:
@@ -379,14 +381,15 @@ with h1:
     else:
         st.markdown("## ⛽")
 with h2:
-    user_data = st.session_state.user_info or {"username": "Engineer", "company": "Enterprise Hydrocarbons"}
+    user_data = st.session_state.user_info or {"username": "Engineer", "company": ""}
+    company_display = user_data.get("company") or "Enterprise Hydrocarbons"
     st.markdown(
         f"""
         <div class="main-header" style="margin-top:0.35rem;">PetroNexa</div>
         <div class="sub-header" style="margin-bottom:0.4rem; padding-bottom:0.5rem;">
             <i class="fas fa-user-circle"></i> {user_data.get('username')}
             &nbsp;·&nbsp;
-            <i class="fas fa-building"></i> {user_data.get('company')}
+            <i class="fas fa-building"></i> {company_display}
         </div>
         """,
         unsafe_allow_html=True,
@@ -505,6 +508,8 @@ with tab1:
                         plastic_viscosity_cp=pv,
                         yield_point_lb_100ft2=yp,
                     )
+                    
+                    # Instantiate segments matching physics.py dataclass schema
                     for _, row in edited_segments.iterrows():
                         engine.add_segment(
                             WellSegment(
@@ -654,9 +659,9 @@ with tab3:
             st.warning(f"**RISK WARNING**: {diag['message']}")
             st.write(f"• **Recommended Action**: {diag['recommendation']}")
         else:
-            st.success(f"**SAFE OPERATING WINDOW**: {diag['message']}")
+            st.success(f"**WITHIN CONFIGURED HYDRAULIC WINDOW**: {diag['message']}")
             st.write(f"• **Operational Status**: {diag['recommendation']}")
-            
+
         if diag.get("flags"):
             for flag in diag["flags"]:
                 st.info(f"🚩 {flag}")
@@ -694,6 +699,8 @@ with tab4:
             cement_errors.append("Hole Diameter must be strictly greater than Casing OD.")
         if interval_ft <= 0:
             cement_errors.append("Cemented interval length must be greater than zero.")
+        if shoe_track >= interval_ft:
+            cement_errors.append(f"Shoe track length ({shoe_track:,.0f} ft) must be strictly less than cemented interval ({interval_ft:,.0f} ft).")
         if tail_length > interval_ft:
             cement_errors.append(f"Tail slurry length ({tail_length:,.0f} ft) cannot exceed cemented interval ({interval_ft:,.0f} ft).")
 
@@ -750,7 +757,7 @@ with tab5:
                 project_meta = {
                     "name": project_name,
                     "rig_name": rig_name,
-                    "company": user_data.get("company", "Enterprise Hydrocarbons"),
+                    "company": user_data.get("company", ""),
                 }
 
                 diag = st.session_state.latest_diagnostics
