@@ -1,6 +1,6 @@
 """
 PetroNexa Streamlit Web Application Interface
-Complete Enterprise Edition: Auth, Logo Branding, Hydraulics, Cementing, 3D Trajectory, AI Diagnostics, PDF Studio
+Complete Enterprise Edition: Auth, Custom Logo Branding, Hydraulics, Cementing, 3D Trajectory, AI Diagnostics, PDF Studio
 """
 import os
 import sys
@@ -28,6 +28,14 @@ except ModuleNotFoundError:
     from cementing_engine import CementingEngine
     from pdf_generator import ReportGenerator
 
+# Path resolution for logo.png
+LOGO_PATH = os.path.join(REPO_ROOT, "logo.png")
+if not os.path.exists(LOGO_PATH):
+    # Secondary fallback check if logo sits inside /assets or /source
+    alt_logo = os.path.join(REPO_ROOT, "assets", "logo.png")
+    if os.path.exists(alt_logo):
+        LOGO_PATH = alt_logo
+
 # Page Configuration
 st.set_page_config(
     page_title="PetroNexa | Drilling Engineering Suite",
@@ -47,16 +55,19 @@ if "username" not in st.session_state:
 def render_login_screen():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        # App Logo Brand Header
-        st.markdown(
-            """
-            <div style="text-align: center; margin-bottom: 20px;">
-                <h1 style="color: #1E3A8A; font-size: 3rem; margin-bottom: 0;">⚓ PETRONEXA</h1>
-                <p style="color: #6B7280; font-size: 1.1rem;">Optima Pro — Engineering & AI Suite</p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        # Display Custom Logo Branding
+        if os.path.exists(LOGO_PATH):
+            st.image(LOGO_PATH, use_container_width=True)
+        else:
+            st.markdown(
+                """
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h1 style="color: #1E3A8A; font-size: 3rem; margin-bottom: 0;">⚓ PETRONEXA</h1>
+                    <p style="color: #6B7280; font-size: 1.1rem;">Optima Pro — Engineering & AI Suite</p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
         
         st.subheader("🔐 Secure Portal Login")
         with st.form("login_form"):
@@ -65,7 +76,7 @@ def render_login_screen():
             submit_login = st.form_submit_button("Authenticate System", type="primary", use_container_width=True)
 
             if submit_login:
-                if user_input and password_input:  # Validates session credentials
+                if user_input and password_input:
                     st.session_state["authenticated"] = True
                     st.session_state["username"] = user_input
                     st.success("Authentication successful! Redirecting...")
@@ -82,13 +93,20 @@ if not st.session_state["authenticated"]:
 # AUTHENTICATED WORKSPACE & NAVIGATION BAR
 # ==========================================
 
-# Top Brand Header & User Logout Bar
-header_col1, header_col2 = st.columns([4, 1])
+# Header Bar with Integrated Logo and Fixed Logout Button
+header_col1, header_col2, header_col3 = st.columns([1, 4, 1.5])
+
 with header_col1:
-    st.markdown("### ⚓ **PetroNexa Optima Pro** | Operational Engineering Workspace")
+    if os.path.exists(LOGO_PATH):
+        st.image(LOGO_PATH, width=120)
+
 with header_col2:
+    st.markdown("## **PetroNexa Optima Pro**")
+    st.caption("Operational Engineering & AI Diagnostics Workspace")
+
+with header_col3:
     st.write(f"👤 **{st.session_state['username']}**")
-    if st.button("Log Out", size="small"):
+    if st.button("Log Out", type="secondary"):
         st.session_state["authenticated"] = False
         st.session_state["username"] = ""
         st.rerun()
