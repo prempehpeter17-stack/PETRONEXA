@@ -1,33 +1,21 @@
 """
-Central configuration management using Pydantic Settings.
+PetroNexa Centralized Configuration Schema
 """
-from typing import List
 from pydantic_settings import BaseSettings
-from pydantic import Field, SecretStr
-
+from pydantic import Field
 
 class Settings(BaseSettings):
-    app_name: str = "PetroNexa API"
-    app_version: str = "2.0.0"
-    secret_key: SecretStr = Field(default="CHANGE_THIS_IN_PRODUCTION_SECRET_KEY_12345")
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60 * 24  # 24 hours
-
-    # Database
-    database_url: str = Field(default="sqlite+aiosqlite:///./petronexa.db")
-    db_pool_size: int = 5
-    db_max_overflow: int = 10
-
-    # Security
-    allowed_origins: str = "http://localhost:8501,http://127.0.0.1:8501"
-
-    @property
-    def origins_list(self) -> List[str]:
-        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+    app_name: str = "PetroNexa Core Engine"
+    environment: str = Field(default="development", env="ENVIRONMENT")
+    secret_key: str = Field(default="SUPER_SECRET_PETRONEXA_KEY_CHANGE_IN_PROD", env="SECRET_KEY")
+    database_url: str = Field(default="sqlite:///./petronexa.db", env="DATABASE_URL")
+    
+    # DB Pool Adjustments
+    db_pool_size: int = Field(default=10, env="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=20, env="DB_MAX_OVERFLOW")
 
     class Config:
         env_file = ".env"
-        env_file_encoding = "utf-8"
-
+        extra = "ignore"
 
 settings = Settings()
