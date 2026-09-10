@@ -1,46 +1,33 @@
 """
-Async SQLAlchemy Engine & Session Configuration.
+PetroNexa Core Data Persistence Layer
 """
-from typing import AsyncGenerator
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base
-from config import settings
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from source.config import settings
 
-# Adjust pooling kwargs based on DB driver
 is_sqlite = "sqlite" in settings.database_url
-engine_kwargs = {"echo": False}
 
-if not is_sqlite:
-    engine_kwargs.update({
-        "pool_size": settings.db_pool_size,
-        "max_overflow": settings.db_max_overflow,
-        "pool_pre_ping": True,
-    })
+if is_sqlite:
+    engine = create_engine(
+        settings.database_url,
+        connect_args={"check_same_thread": False}
+    )
+else:
+    engine = create_engine(
+        settings.database_url,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_pre_ping=True
+    )
 
-engine = create_async_engine(settings.database_url, **engine_kwargs)
-
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
-)
-
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-
-
-async def init_db() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+def get_db():
+    """FastAPI Dependency for database session life-cycle management."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
