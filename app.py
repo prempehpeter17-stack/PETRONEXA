@@ -1,18 +1,29 @@
 """
 PetroNexa Streamlit Web Application Interface
 """
+import os
 import sys
-from pathlib import Path
 
-# Explicitly resolve root path to prevent ModuleNotFoundError on Streamlit Cloud
-ROOT_DIR = Path(__file__).resolve().parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+# Force Streamlit Cloud runtime to recognize both repo root and /source directory
+REPO_ROOT = os.path.abspath(os.path.dirname(__file__))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+SOURCE_DIR = os.path.join(REPO_ROOT, "source")
+if SOURCE_DIR not in sys.path:
+    sys.path.insert(0, SOURCE_DIR)
 
 import streamlit as st
-from source.physics import DrillingFluidEngine
-from source.cementing_engine import CementingEngine
-from source.pdf_generator import ReportGenerator
+
+# Safe import try/except block to handle root and module package imports
+try:
+    from source.physics import DrillingFluidEngine
+    from source.cementing_engine import CementingEngine
+    from source.pdf_generator import ReportGenerator
+except ModuleNotFoundError:
+    from physics import DrillingFluidEngine
+    from cementing_engine import CementingEngine
+    from pdf_generator import ReportGenerator
 
 # Page Configuration & Styling
 st.set_page_config(
