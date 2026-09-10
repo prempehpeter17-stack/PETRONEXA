@@ -1,8 +1,7 @@
-# physics.py
 """
-Drilling Hydraulics Engine – PetroNexa
+Drilling Hydraulics & Safety Diagnostics Engine – PetroNexa
 Bingham Plastic, Power Law, Herschel-Bulkley with laminar/turbulent
-regime detection and proper TVD-based ECD.
+regime detection and TVD-based ECD.
 """
 import math
 import logging
@@ -49,12 +48,6 @@ class DrillingHydraulicsEngine:
         yield_point_lb_100ft2: float = 15.0,
         rheology_model: RheologyModel = RheologyModel.BINGHAM_PLASTIC,
     ):
-        """
-        total_depth_ft  = Measured Depth (MD)
-        true_vertical_depth_ft = True Vertical Depth (TVD).
-            If None, assumes vertical well (TVD = MD).
-            ECD always uses TVD.
-        """
         self.surface_mud_weight_ppg = max(0.1, surface_mud_weight_ppg)
         self.flow_rate_gpm = max(0.1, flow_rate_gpm)
         self.total_depth_ft = max(1.0, total_depth_ft)
@@ -179,22 +172,6 @@ class DrillingHydraulicsEngine:
             )
         return dp_dl, "Turbulent" if turbulent else "Laminar"
 
-    @staticmethod
-    def calculate_cuttings_slip_velocity(
-        mud_weight_ppg: float,
-        plastic_viscosity_cp: float,
-        cuttings_diameter_in: float = 0.25,
-        cuttings_density_ppg: float = 21.0,
-    ) -> float:
-        rho_f = mud_weight_ppg * 1000.0 / 8.34
-        rho_p = cuttings_density_ppg * 1000.0 / 8.34
-        d = cuttings_diameter_in * 0.0254
-        mu = max(plastic_viscosity_cp * 0.001, 1e-6)
-        g = 9.81
-        v_stokes = (d ** 2 * (rho_p - rho_f) * g) / (18.0 * mu)
-        v_slip_ms = v_stokes * 0.7
-        return max(v_slip_ms * 196.85, 1.0)
-
     def calculate_bit_hydraulics(self, mud_weight_ppg: float) -> Dict[str, float]:
         empty = {
             "tna_sq_in": 0.0,
@@ -274,7 +251,6 @@ class DrillingHydraulicsEngine:
             + total_annular_dp_psi
         )
 
-        # ECD always uses True Vertical Depth
         bottomhole_ecd = self.surface_mud_weight_ppg + (
             total_annular_dp_psi / (0.052 * self.true_vertical_depth_ft)
         )
@@ -301,7 +277,15 @@ class DiagnosticEngine:
         self.ecd_upper_threshold_delta = ecd_upper_threshold_delta
         self.max_spp_limit = max_spp_limit
 
-    def analyze_telemetry(self, physics_metrics: Dict[str, Any], historical_esd: float) -> Dict[str, Any]:
+    def analyze_telemetry(
+        self,
+        physics_metrics: Dict[str, Any],
+        equivalent_static_density_esd: float,
+        formation_frac_gradient_ppg: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Analyzes operating parameters against static fluid pressure (ESD) and fracture thresholds.
+        """
         ecd = physics_metrics.get("equivalent_circulating_density_ecd_ppg", 0.0)
         spp = physics_metrics.get("standpipe_pressure_spp_psi", 0.0)
 
@@ -313,21 +297,24 @@ class DiagnosticEngine:
             "Continue regular monitoring of shaker cuttings and torque/drag trends.",
         ]
 
-        if ecd > (historical_esd + self.ecd_upper_threshold_delta):
+        # Check against fracture gradient if provided, otherwise use ESD threshold delta
+        frac_limit = formation_frac_gradient_ppg if formation_frac_gradient_ppg is not None else (equivalent_static_density_esd + self.ecd_upper_threshold_delta)
+
+        if ecd >= frac_limit:
             severity = "RED"
             matched_hazard = "Excessive ECD / High Risk of Formation Fracturing"
             recommendations = [
                 "Reduce flow rate (GPM) or pump speed to lower annular friction pressure drop.",
-                "Dilute or treat mud to lower Plastic Viscosity (PV) and Yield Point (YP).",
-                "Verify hole cleaning status; check for cuttings pack-off along the annulus.",
+                "Dilute fluid to reduce Plastic Viscosity (PV) and Yield Point (YP).",
+                "Verify hole cleaning status; check for cuttings accumulation in the annulus.",
             ]
         elif spp > self.max_spp_limit:
             severity = "YELLOW"
             matched_hazard = "High Standpipe Pressure (SPP Warning)"
             recommendations = [
                 "Check standpipe manifold and surface line valve alignments.",
-                "Inspect bit nozzles for partial plugging or balling.",
-                "Verify drill string internal restrictions.",
+                "Inspect bit nozzles for partial plugging or bit balling.",
+                "Verify drill string internal diameter restrictions.",
             ]
 
         return {
@@ -335,8 +322,8 @@ class DiagnosticEngine:
             "severity": severity,
             "matched_hazard": matched_hazard,
             "detailed_diagnosis": (
-                f"Operating ECD is {ecd:.2f} ppg (Surface Mud Weight: {historical_esd:.2f} ppg) "
-                f"with Standpipe Pressure at {spp:.1f} psi."
+                f"Operating ECD is {ecd:.2f} ppg against baseline ESD of {equivalent_static_density_esd:.2f} ppg. "
+                f"Standpipe Pressure at {spp:.1f} psi."
             ),
             "actionable_recommendations": recommendations,
         }
