@@ -1,13 +1,3 @@
-import streamlit as st
-
-# 1. PAGE CONFIG MUST BE FIRST
-st.set_page_config(
-    page_title="PetroNexa",
-    page_icon="logo.png" if st.runtime.exists() else "⛽",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 import os
 import base64
 import asyncio
@@ -16,10 +6,11 @@ from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import streamlit as st
 from sqlalchemy import select, or_
 from sqlalchemy.exc import IntegrityError
 
-# Module Imports
+# Module Imports (Engineering Backbone Intact)
 from database import init_db, AsyncSessionLocal, UserModel
 from auth import get_password_hash, verify_password
 from physics import DrillingHydraulicsEngine, WellSegment, NozzleInput, RheologyModel
@@ -28,6 +19,16 @@ from pdf_generator import generate_pdf_payload
 from mud_parser import parse_mud_report
 from gradients import PressureGradientProfile
 from benchmarks import compare_cementing_results
+
+# 1. PAGE CONFIGURATION
+PAGE_ICON = "logo.png" if os.path.exists("logo.png") else "⛽"
+
+st.set_page_config(
+    page_title="PetroNexa",
+    page_icon=PAGE_ICON,
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 
 # ============================
@@ -139,6 +140,64 @@ html.theme-dark .stale-badge, [data-theme="dark"] .stale-badge { background: #45
 
 
 # ============================
+# INPUT VALIDATION GUARDRAILS
+# ============================
+def validate_hydraulics_inputs(
+    total_depth: float,
+    tvd: float,
+    flow_rate: float,
+    surface_mw: float,
+    pv: float,
+    yp: float,
+    segments_df: pd.DataFrame,
+) -> list:
+    """Validates physical and geometrical parameters before running hydraulics calculations."""
+    errors = []
+
+    if total_depth <= 0:
+        errors.append("Total Depth (MD) must be greater than zero.")
+    if tvd <= 0:
+        errors.append("True Vertical Depth (TVD) must be greater than zero.")
+    if tvd > total_depth:
+        errors.append("TVD cannot exceed Total Depth (MD).")
+    if flow_rate <= 0:
+        errors.append("Flow rate must be greater than zero.")
+    if surface_mw <= 0:
+        errors.append("Surface Mud Weight must be greater than zero.")
+    if pv < 0:
+        errors.append("Plastic Viscosity cannot be negative.")
+    if yp < 0:
+        errors.append("Yield Point cannot be negative.")
+
+    required_columns = ["Length (ft)", "Pipe OD (in)", "Pipe ID (in)", "Hole ID (in)", "Mud Weight (ppg)"]
+    for col in required_columns:
+        if col not in segments_df.columns:
+            errors.append(f"Missing drill string column: {col}")
+
+    if not segments_df.empty and len(errors) == 0:
+        for idx, row in segments_df.iterrows():
+            seg_num = idx + 1
+            length = float(row.get("Length (ft)", 0))
+            p_od = float(row.get("Pipe OD (in)", 0))
+            p_id = float(row.get("Pipe ID (in)", 0))
+            h_id = float(row.get("Hole ID (in)", 0))
+            m_wt = float(row.get("Mud Weight (ppg)", 0))
+
+            if length <= 0:
+                errors.append(f"Segment {seg_num}: Length must be greater than zero.")
+            if p_id <= 0:
+                errors.append(f"Segment {seg_num}: Pipe ID must be greater than zero.")
+            if p_od <= p_id:
+                errors.append(f"Segment {seg_num}: Pipe OD ({p_od:.3f} in) must be strictly greater than Pipe ID ({p_id:.3f} in).")
+            if h_id <= p_od:
+                errors.append(f"Segment {seg_num}: Hole ID ({h_id:.3f} in) must be strictly greater than Pipe OD ({p_od:.3f} in).")
+            if m_wt <= 0:
+                errors.append(f"Segment {seg_num}: Mud Weight must be greater than zero.")
+
+    return errors
+
+
+# ============================
 # UNIFIED SAFETY EVALUATOR
 # ============================
 def evaluate_drilling_safety(ecd: float, target_depth: float, gradient_df: pd.DataFrame):
@@ -166,9 +225,9 @@ def evaluate_drilling_safety(ecd: float, target_depth: float, gradient_df: pd.Da
             "severity": "RED",
             "pore_limit": pore_limit,
             "frac_limit": frac_limit,
-            "matched_hazard": "Formation Fracturing / Lost Circulation",
+            "matched_hazard": "Formation Fracturing Risk",
             "message": f"ECD ({ecd:.2f} ppg) exceeds formation fracture gradient ({frac_limit:.2f} ppg) at target depth.",
-            "recommendation": "Review pump displacement rate, rheology parameters, and mud-weight program to maintain well integrity.",
+            "recommendation": "Review pump displacement rate, rheology parameters, and mud-weight program to restore hydraulic operating window.",
         }
     elif ecd < pore_limit:
         return {
@@ -177,8 +236,8 @@ def evaluate_drilling_safety(ecd: float, target_depth: float, gradient_df: pd.Da
             "pore_limit": pore_limit,
             "frac_limit": frac_limit,
             "matched_hazard": "Underbalanced Influx Risk",
-            "message": f"ECD ({ecd:.2f} ppg) is below estimated pore pressure ({pore_limit:.2f} ppg). Risk of formation fluid kick.",
-            "recommendation": "Adjust mud weight or circulation parameters to secure required hydrostatic overbalance.",
+            "message": f"ECD ({ecd:.2f} ppg) is below estimated formation pore pressure ({pore_limit:.2f} ppg).",
+            "recommendation": "Adjust mud density or circulation parameters to secure required hydrostatic overbalance.",
         }
     else:
         return {
@@ -187,8 +246,8 @@ def evaluate_drilling_safety(ecd: float, target_depth: float, gradient_df: pd.Da
             "pore_limit": pore_limit,
             "frac_limit": frac_limit,
             "matched_hazard": "None",
-            "message": f"ECD ({ecd:.2f} ppg) is securely within Pore ({pore_limit:.2f} ppg) and Fracture ({frac_limit:.2f} ppg) boundaries.",
-            "recommendation": "Hydraulics window is balanced and safe for continued drilling.",
+            "message": f"ECD ({ecd:.2f} ppg) is within configured Pore ({pore_limit:.2f} ppg) and Fracture ({frac_limit:.2f} ppg) design boundaries.",
+            "recommendation": "Hydraulics window is within configured design limits. Continue operations under standard well-control protocol.",
         }
 
 
@@ -325,9 +384,6 @@ with st.sidebar:
         tvd = st.number_input("True Vertical Depth – TVD (ft)", value=10000.0, step=500.0)
         flow_rate = st.number_input("Flow Rate (GPM)", value=550.0, step=25.0)
 
-        if tvd > total_depth:
-            st.error("TVD cannot exceed Total Depth (MD).")
-
     with st.expander("Mud Properties", expanded=True):
         default_mw = st.session_state.auto_mw if st.session_state.auto_mw is not None else 12.5
         surface_mw = st.number_input("Surface Mud Weight (ppg)", value=default_mw, step=0.1)
@@ -343,7 +399,8 @@ with st.sidebar:
 
     if uploaded_file is not None and not st.session_state.parsed:
         try:
-            file_type = "csv" if uploaded_file.name.endswith(".csv") else "excel"
+            filename_lower = uploaded_file.name.lower()
+            file_type = "csv" if filename_lower.endswith(".csv") else "excel"
             data = parse_mud_report(uploaded_file.read(), file_type)
             st.session_state.auto_pv = data["pv_cp"]
             st.session_state.auto_yp = data["yp"]
@@ -406,8 +463,19 @@ with tab1:
         st.warning(f"Total segment length ({total_seg_length:,.0f} ft) does not equal Total Depth MD ({total_depth:,.0f} ft).")
 
     if st.button("Run Hydraulics Simulation", type="primary", use_container_width=True):
-        if tvd > total_depth:
-            st.error("Cannot run simulation: TVD exceeds Total Depth MD.")
+        validation_errors = validate_hydraulics_inputs(
+            total_depth,
+            tvd,
+            flow_rate,
+            surface_mw,
+            pv,
+            yp,
+            edited_segments,
+        )
+
+        if validation_errors:
+            for err in validation_errors:
+                st.error(err)
         else:
             with st.spinner("Calculating wellbore hydraulics..."):
                 try:
@@ -485,18 +553,28 @@ with tab2:
     with tc5:
         azimuth_deg = st.number_input("Azimuth Angle (deg)", value=60.0, min_value=0.0, max_value=360.0, step=10.0)
 
-    # TRAJECTORY INPUT VALIDATION
-    if not (0 <= kop_ft < dop_ft < total_depth):
-        st.error(f"Invalid Trajectory Order: Enforce 0 ≤ KOP ({kop_ft:,.0f} ft) < DOP ({dop_ft:,.0f} ft) < TD ({total_depth:,.0f} ft).")
-    elif final_inc_deg > max_inc_deg:
-        st.error("Final inclination cannot exceed maximum inclination.")
+    # TRAJECTORY INTERVAL & BOUNDARY VALIDATION
+    traj_errors = []
+    if kop_ft <= 0:
+        traj_errors.append("Kick-Off Point (KOP) must be greater than zero.")
+    if dop_ft <= kop_ft + 500.0:
+        traj_errors.append(f"Drop-Off Point ({dop_ft:,.0f} ft) must be at least 500 ft deeper than KOP ({kop_ft:,.0f} ft).")
+    if total_depth <= dop_ft + 500.0:
+        traj_errors.append(f"Total Depth ({total_depth:,.0f} ft) must be at least 500 ft deeper than DOP ({dop_ft:,.0f} ft).")
+    if final_inc_deg > max_inc_deg:
+        traj_errors.append("Final inclination cannot exceed maximum inclination.")
+
+    if traj_errors:
+        for err in traj_errors:
+            st.error(err)
     else:
+        build_length = (dop_ft - kop_ft) * 0.4
+        build_end = kop_ft + build_length
+        drop_end = dop_ft + (total_depth - dop_ft) * 0.6
+
         md = np.linspace(0, total_depth, 250)
         inc = np.zeros_like(md)
         az = np.radians(np.full_like(md, azimuth_deg))
-
-        build_end = min(kop_ft + 2500, dop_ft - 500)
-        drop_end = min(dop_ft + 2000, total_depth)
 
         for i, depth in enumerate(md):
             if depth <= kop_ft:
@@ -587,48 +665,53 @@ with tab4:
     spacer_length = st.number_input("Spacer Annular Length (ft)", value=500.0, step=50.0)
 
     if st.button("Run Cementing Calculation", type="primary", use_container_width=True):
-        try:
-            params = PrimaryCementingInput(
-                hole_diameter_in=hole_dia,
-                casing_od_in=casing_od,
-                casing_id_in=casing_id,
-                interval_length_ft=interval_ft,
-                washout_factor_pct=washout_pct,
-                shoe_track_length_ft=shoe_track,
-                lead_slurry_density_ppg=lead_dens,
-                tail_slurry_density_ppg=tail_dens,
-                spacer_density_ppg=spacer_dens,
-                displacement_fluid_density_ppg=disp_dens,
-                tail_slurry_length_ft=tail_length,
-                bht_fahrenheit=bht,
-                spacer_annular_length_ft=spacer_length,
-                true_vertical_depth_ft=tvd,
-            )
-            engine = CementingEngine()
-            result = engine.design_primary_job(params)
-            st.session_state.cementing_results = result
-            st.session_state.cementing_params = {"casing_od": casing_od, "hole_dia": hole_dia, "interval_ft": interval_ft}
+        if casing_od <= casing_id:
+            st.error("Casing OD must be strictly greater than Casing ID.")
+        elif hole_dia <= casing_od:
+            st.error("Hole Diameter must be strictly greater than Casing OD.")
+        else:
+            try:
+                params = PrimaryCementingInput(
+                    hole_diameter_in=hole_dia,
+                    casing_od_in=casing_od,
+                    casing_id_in=casing_id,
+                    interval_length_ft=interval_ft,
+                    washout_factor_pct=washout_pct,
+                    shoe_track_length_ft=shoe_track,
+                    lead_slurry_density_ppg=lead_dens,
+                    tail_slurry_density_ppg=tail_dens,
+                    spacer_density_ppg=spacer_dens,
+                    displacement_fluid_density_ppg=disp_dens,
+                    tail_slurry_length_ft=tail_length,
+                    bht_fahrenheit=bht,
+                    spacer_annular_length_ft=spacer_length,
+                    true_vertical_depth_ft=tvd,
+                )
+                engine = CementingEngine()
+                result = engine.design_primary_job(params)
+                st.session_state.cementing_results = result
+                st.session_state.cementing_params = {"casing_od": casing_od, "hole_dia": hole_dia, "interval_ft": interval_ft}
 
-            v1, v2, v3, v4 = st.columns(4)
-            v1.metric("Lead Slurry Volume", f"{result['lead_slurry_volume_bbl']:.2f} bbl")
-            v2.metric("Tail Slurry Volume", f"{result['tail_slurry_volume_bbl']:.2f} bbl")
-            v3.metric("Spacer Volume", f"{result['spacer_volume_bbl']:.2f} bbl")
-            v4.metric("Displacement Volume", f"{result['displacement_volume_bbl']:.2f} bbl")
+                v1, v2, v3, v4 = st.columns(4)
+                v1.metric("Lead Slurry Volume", f"{result['lead_slurry_volume_bbl']:.2f} bbl")
+                v2.metric("Tail Slurry Volume", f"{result['tail_slurry_volume_bbl']:.2f} bbl")
+                v3.metric("Spacer Volume", f"{result['spacer_volume_bbl']:.2f} bbl")
+                v4.metric("Displacement Volume", f"{result['displacement_volume_bbl']:.2f} bbl")
 
-            st.metric("Recommended Plug Bumping Pressure", f"{result['recommended_plug_bumping_pressure_psi']:.1f} psi")
+                st.metric("Recommended Plug Bumping Pressure", f"{result['recommended_plug_bumping_pressure_psi']:.1f} psi")
 
-            # BENCHMARK COMPARISON RE-INTEGRATION
-            st.markdown('<div class="section-title" style="margin-top:1.4rem;"><i class="fas fa-balance-scale"></i> Historical Cementing Benchmarks</div>', unsafe_allow_html=True)
-            benchmarks = compare_cementing_results(result)
-            st.dataframe(pd.DataFrame(benchmarks), use_container_width=True)
+                # BENCHMARK COMPARISON RE-INTEGRATION
+                st.markdown('<div class="section-title" style="margin-top:1.4rem;"><i class="fas fa-balance-scale"></i> Historical Cementing Benchmarks</div>', unsafe_allow_html=True)
+                benchmarks = compare_cementing_results(result)
+                st.dataframe(pd.DataFrame(benchmarks), use_container_width=True)
 
-        except Exception as e:
-            st.error(f"Cementing design error: {e}")
+            except Exception as e:
+                st.error(f"Cementing design error: {e}")
 
 
 # ---------- TAB 5: PDF EXPORT ----------
 with tab5:
-    st.markdown('<div class="section-title"><i class="fas fa-file-pdf"></i> Generate Engineering & Compliance Report</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title"><i class="fas fa-file-pdf"></i> Generate Engineering Report & Compliance Summary</div>', unsafe_allow_html=True)
 
     if st.session_state.latest_results is not None and st.session_state.latest_diagnostics is not None:
         if st.button("Export Engineering PDF", type="primary", use_container_width=True):
