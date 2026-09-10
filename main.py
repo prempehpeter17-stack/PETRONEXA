@@ -1,70 +1,135 @@
-"""
-PetroNexa API - Unified Main Entrypoint
-"""
-import sys
-from pathlib import Path
+"""PetroNexa FastAPI backend.
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
-
-from fastapi import FastAPI, HTTPException, Status
-from pydantic import BaseModel, Field
+The API exposes the existing validated engineering engines to mobile, desktop,
+and web clients. Engineering calculations remain in pure-Python modules so they
+can be tested independently from the UI.
+"""
+import logging
+from contextlib import asynccontextmanager
 from typing import List, Optional
-from source.physics import DrillingFluidEngine
+
+from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from config import settings
+from physics import DrillingHydraulicsEngine, WellSegment, DiagnosticEngine
+from cementing_engine import PrimaryCementingInput, CementingEngine
+from pdf_generator import generate_pdf_payload
+from database import init_db, get_db, UserModel, Project
+from auth import get_current_user
+from router import router as auth_router
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("petronexa.api")
+ai_diagnostics: Optional[DiagnosticEngine] = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Initializing PetroNexa services...")
+    await init_db()
+    global ai_diagnostics
+    ai_diagnostics = DiagnosticEngine(ecd_upper_threshold_delta=1.5, max_spp_limit=3500.0)
+    yield
+    logger.info("PetroNexa services stopped.")
 
 app = FastAPI(
     title="PetroNexa API",
-    version="1.0.0",
-    description="Engineered Petroleum & Drilling Hydraulics API"
+    description="Petroleum Engineering Intelligence Platform API.",
+    version=settings.app_version,
+    lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+app.include_router(auth_router)
+
 class WellSegmentSchema(BaseModel):
-    length_ft: float = Field(..., gt=0, description="Segment length in feet")
-    inner_diameter_in: float = Field(..., gt=0, description="Inner diameter in inches")
-    outer_diameter_in: float = Field(..., gt=0, description="Outer diameter in inches")
-    mud_weight_ppg: float = Field(..., gt=0, description="Mud weight in ppg")
+    name: str = Field(default="Drill Pipe", max_length=100)
+    top_md: float = Field(default=0.0, ge=0.0)
+    bottom_md: float = Field(default=7000.0, ge=0.0)
+    pipe_od: float = Field(default=5.0, gt=0.0)
+    pipe_id: float = Field(default=4.276, gt=0.0)
+    hole_id: float = Field(default=8.5, gt=0.0)
 
 class HydraulicsPayloadSchema(BaseModel):
-    surface_mud_weight_ppg: float = Field(..., gt=0, description="Surface mud weight in ppg")
-    flow_rate_gpm: float = Field(..., gt=0, description="Flow rate in GPM")
-    total_depth_ft: float = Field(..., gt=0, description="Measured Depth in feet")
-    true_vertical_depth_ft: float = Field(..., gt=0, description="True Vertical Depth in feet")
-    equivalent_static_density_ppg: Optional[float] = Field(None, gt=0, description="ESD in ppg")
-    segments: Optional[List[WellSegmentSchema]] = Field(default=[], description="Wellbore segments")
-    
-    pp_safety_margin_ppg: float = Field(default=0.5, ge=0.0)
-    fg_safety_margin_ppg: float = Field(default=0.2, ge=0.0)
+    flow_rate_gpm: float = Field(default=450.0, gt=0.0)
+    total_depth_ft: float = Field(default=8000.0, gt=0.0)
+    surface_mud_weight_ppg: float = Field(default=10.0, gt=0.0)
+    plastic_viscosity_cp: float = Field(default=20.0, ge=0.0)
+    yield_point_lb_100ft2: float = Field(default=15.0, ge=0.0)
+    segments: Optional[List[WellSegmentSchema]] = None
 
-@app.post("/api/v1/hydraulics/calculate", status_code=Status.HTTP_200_OK)
-async def calculate_hydraulics(payload: HydraulicsPayloadSchema):
-    esd_provided = payload.equivalent_static_density_ppg is not None
-    esd_used = payload.equivalent_static_density_ppg if esd_provided else payload.surface_mud_weight_ppg
-    
-    diagnostic_warnings = []
-    if not esd_provided:
-        diagnostic_warnings.append("ESD not provided — surface mud weight used as baseline.")
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    well_name: str = Field(default="", max_length=120)
+    field_name: str = Field(default="", max_length=120)
+    rig_name: str = Field(default="", max_length=120)
+    trajectory_data: dict | None = None
 
+@app.get("/", tags=["System Status"])
+async def root():
+    return {"system": settings.app_name, "status": "OPERATIONAL", "version": settings.app_version}
+
+@app.get("/health", tags=["System Status"])
+async def health():
+    return {"status": "ok", "service": "petronexa-api", "version": settings.app_version}
+
+@app.get("/api/v1/me", tags=["Authentication"])
+async def me(current_user: UserModel = Depends(get_current_user)):
+    return {"id": current_user.id, "username": current_user.username, "email": current_user.email, "role": current_user.role, "company_name": current_user.company_name}
+
+@app.get("/api/v1/projects", tags=["Projects"])
+async def list_projects(current_user: UserModel = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Project).where(Project.user_id == current_user.id).order_by(Project.created_at.desc()))
+    return [{"id": p.id, "name": p.name, "well_name": p.well_name, "field_name": p.field_name, "rig_name": p.rig_name, "created_at": p.created_at} for p in result.scalars().all()]
+
+@app.post("/api/v1/projects", status_code=201, tags=["Projects"])
+async def create_project(payload: ProjectCreate, current_user: UserModel = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    project = Project(user_id=current_user.id, **payload.model_dump())
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    return {"id": project.id, **payload.model_dump()}
+
+@app.post("/api/v1/hydraulics/calculate", tags=["Hydraulics Engine"])
+async def calculate_hydraulics(payload: HydraulicsPayloadSchema, current_user: UserModel = Depends(get_current_user)):
     try:
-        engine = DrillingFluidEngine(
-            surface_mud_weight_ppg=payload.surface_mud_weight_ppg,
-            flow_rate_gpm=payload.flow_rate_gpm,
-            total_depth_ft=payload.total_depth_ft,
-            true_vertical_depth_ft=payload.true_vertical_depth_ft
-        )
-        
-        mock_annular_dp = 250.0
-        ecd = engine.calculate_bottomhole_ecd(total_annular_dp_psi=mock_annular_dp)
+        engine = DrillingHydraulicsEngine(surface_mud_weight_ppg=payload.surface_mud_weight_ppg, flow_rate_gpm=payload.flow_rate_gpm, total_depth_ft=payload.total_depth_ft, plastic_viscosity_cp=payload.plastic_viscosity_cp, yield_point_lb_100ft2=payload.yield_point_lb_100ft2)
+        if payload.segments:
+            for seg in payload.segments:
+                engine.add_segment(WellSegment(name=seg.name, length_ft=max(0.0, seg.bottom_md - seg.top_md), pipe_od_in=seg.pipe_od, pipe_id_in=seg.pipe_id, hole_id_in=seg.hole_id, mud_weight_ppg=payload.surface_mud_weight_ppg, viscosity_cp=payload.plastic_viscosity_cp, yield_point_lb_100ft2=payload.yield_point_lb_100ft2))
+        else:
+            engine.add_segment(WellSegment(name="Default Drill String", length_ft=payload.total_depth_ft, pipe_od_in=5.0, pipe_id_in=4.276, hole_id_in=8.5, mud_weight_ppg=payload.surface_mud_weight_ppg, viscosity_cp=payload.plastic_viscosity_cp, yield_point_lb_100ft2=payload.yield_point_lb_100ft2))
+        results = engine.solve()
+        diagnostics = ai_diagnostics.analyze_telemetry(physics_metrics=results, historical_esd=payload.surface_mud_weight_ppg) if ai_diagnostics else {}
+        return {"physics_results": results, "diagnostics": diagnostics}
+    except Exception as exc:
+        logger.exception("Hydraulics calculation failed")
+        raise HTTPException(status_code=500, detail=f"Calculation Engine Failure: {exc}")
 
-        return {
-            "status": "success",
-            "esd_used_ppg": esd_used,
-            "calculated_ecd_ppg": ecd,
-            "diagnostics": {
-                "warnings": diagnostic_warnings,
-                "pp_safety_margin_ppg": payload.pp_safety_margin_ppg,
-                "fg_safety_margin_ppg": payload.fg_safety_margin_ppg
-            }
-        }
-    except ValueError as err:
-        raise HTTPException(status_code=Status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(err))
+@app.post("/api/v1/hydraulics/export-pdf", tags=["Reports"])
+async def export_pdf_report(payload: HydraulicsPayloadSchema, current_user: UserModel = Depends(get_current_user)):
+    calc_response = await calculate_hydraulics(payload, current_user)
+    pdf_buffer = generate_pdf_payload(project_metadata={"name": payload.segments[0].name if payload.segments else "Default Well", "rig_name": "", "company": current_user.company_name}, physics_results=calc_response["physics_results"], diagnostic_results=calc_response["diagnostics"], engineer_name=current_user.username, cementing_results=None)
+    return StreamingResponse(pdf_buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=PetroNexa_Technical_Report.pdf"})
+
+@app.post("/api/v1/cementing/design", tags=["Cementing Engine"])
+async def design_cement_job(params: PrimaryCementingInput, current_user: UserModel = Depends(get_current_user)):
+    try:
+        return CementingEngine().design_primary_job(params)
+    except Exception as exc:
+        logger.exception("Cementing design failed")
+        raise HTTPException(status_code=500, detail=f"Cementing Engine Failure: {exc}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

@@ -1,79 +1,150 @@
+# cementing_engine.py
 """
-PetroNexa Engineering Engine - Cementing Operations Module
+Primary Cementing & P&A Engineering Calculations Engine – PetroNexa
+All volumes calculated dynamically from geometry (no hard-coded spacer).
 """
 import math
-from typing import List, Dict
+from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, Field
+
+
+class Additive(BaseModel):
+    name: str
+    category: str
+    recommended_concentration_pct: float
+    description: str
+
+
+CEMENT_ADDITIVES_DB: Dict[str, Additive] = {
+    "Lignosulfonate": Additive(
+        name="Lignosulfonate",
+        category="Retarder",
+        recommended_concentration_pct=0.3,
+        description="Extends slurry thickening time for high bottom-hole temperatures (>170F).",
+    ),
+    "Calcium Chloride": Additive(
+        name="Calcium Chloride",
+        category="Accelerator",
+        recommended_concentration_pct=2.0,
+        description="Accelerates early compressive strength development at shallow, cold intervals.",
+    ),
+    "Barite": Additive(
+        name="Barite",
+        category="Weighting Agent",
+        recommended_concentration_pct=15.0,
+        description="Increases cement slurry density for high-pressure zones.",
+    ),
+    "HEC Polymer": Additive(
+        name="HEC Polymer",
+        category="Fluid Loss Control",
+        recommended_concentration_pct=0.5,
+        description="Prevents fluid filtration loss into permeable formations.",
+    ),
+}
+
+
+class PrimaryCementingInput(BaseModel):
+    hole_diameter_in: float = Field(..., gt=0)
+    casing_od_in: float = Field(..., gt=0)
+    casing_id_in: float = Field(..., gt=0)
+    interval_length_ft: float = Field(..., gt=0)
+    washout_factor_pct: float = Field(default=15.0, ge=0)
+    shoe_track_length_ft: float = Field(default=40.0, ge=0)
+    lead_slurry_density_ppg: float = Field(default=12.5, gt=0)
+    tail_slurry_density_ppg: float = Field(default=15.8, gt=0)
+    spacer_density_ppg: float = Field(default=11.0, gt=0)
+    displacement_fluid_density_ppg: float = Field(default=10.0, gt=0)
+    tail_slurry_length_ft: float = Field(default=500.0, ge=0)
+    bht_fahrenheit: float = Field(default=180.0, ge=0)
+    spacer_annular_length_ft: float = Field(default=500.0, ge=0)
+    spacer_volume_override_bbl: Optional[float] = Field(default=None, ge=0)
+    true_vertical_depth_ft: Optional[float] = Field(default=None, ge=0)
+
 
 class CementingEngine:
-    def __init__(
-        self,
-        casing_outer_diameter_in: float,
-        casing_inner_diameter_in: float,
-        hole_diameter_in: float,
-        total_depth_ft: float,
-        top_of_cement_ft: float
-    ):
-        if casing_outer_diameter_in <= 0 or casing_inner_diameter_in <= 0 or hole_diameter_in <= 0:
-            raise ValueError("All diameter inputs must be strictly greater than zero.")
-        if casing_inner_diameter_in >= casing_outer_diameter_in:
-            raise ValueError("Casing inner diameter must be less than outer diameter.")
-        if casing_outer_diameter_in >= hole_diameter_in:
-            raise ValueError("Casing outer diameter must be smaller than wellbore hole diameter.")
-        if total_depth_ft <= 0 or top_of_cement_ft < 0:
-            raise ValueError("Well depths must be non-negative values.")
-        if top_of_cement_ft >= total_depth_ft:
-            raise ValueError("Top of cement (TOC) must be shallower than Total Depth (TD).")
+    @staticmethod
+    def calculate_annular_volume_bbl(
+        hole_dia_in: float, casing_od_in: float, length_ft: float, washout_pct: float = 0.0
+    ) -> float:
+        if hole_dia_in <= casing_od_in:
+            raise ValueError("Hole diameter must be greater than casing outer diameter.")
+        we = washout_pct / 100.0
+        vol_cu_ft = (math.pi / 4.0) * ((hole_dia_in**2 - casing_od_in**2) / 144.0) * length_ft * (1.0 + we)
+        return vol_cu_ft / 5.6146
 
-        self.casing_od = casing_outer_diameter_in
-        self.casing_id = casing_inner_diameter_in
-        self.hole_diameter = hole_diameter_in
-        self.total_depth_ft = total_depth_ft
-        self.top_of_cement_ft = top_of_cement_ft
+    @staticmethod
+    def calculate_pipe_capacity_bbl(pipe_id_in: float, length_ft: float) -> float:
+        vol_cu_ft = (math.pi / 4.0) * ((pipe_id_in**2) / 144.0) * length_ft
+        return vol_cu_ft / 5.6146
 
-    def calculate_annular_capacity_bbl_ft(self) -> float:
-        """Calculates annular capacity between casing OD and open hole diameter in bbl/ft."""
-        capacity = (self.hole_diameter**2 - self.casing_od**2) / 1029.4
-        return round(capacity, 5)
+    @staticmethod
+    def compare_with_industry(software_results, casing_od, hole_dia, interval_length):
+        from benchmarks import compare_cementing_results
+        return compare_cementing_results(software_results, casing_od, hole_dia, interval_length)
 
-    def calculate_slurry_volume_bbl(self, excess_percentage: float = 0.0) -> float:
-        """Calculates total required cement slurry volume including excess factor."""
-        if excess_percentage < 0:
-            raise ValueError("Excess percentage cannot be negative.")
+    def design_primary_job(self, params: PrimaryCementingInput) -> Dict[str, Any]:
+        lead_length = max(0.0, params.interval_length_ft - params.tail_slurry_length_ft)
 
-        cement_interval_ft = self.total_depth_ft - self.top_of_cement_ft
-        net_capacity = self.calculate_annular_capacity_bbl_ft()
-        base_volume = cement_interval_ft * net_capacity
-        total_volume = base_volume * (1.0 + (excess_percentage / 100.0))
-        return round(total_volume, 2)
+        tail_vol_bbl = self.calculate_annular_volume_bbl(
+            params.hole_diameter_in, params.casing_od_in,
+            params.tail_slurry_length_ft, params.washout_factor_pct
+        )
+        lead_vol_bbl = (
+            self.calculate_annular_volume_bbl(
+                params.hole_diameter_in, params.casing_od_in,
+                lead_length, params.washout_factor_pct
+            ) if lead_length > 0 else 0.0
+        )
 
-    def calculate_displacement_volume_bbl(self, shoe_track_length_ft: float = 0.0) -> float:
-        """Calculates displacement fluid volume to bump plug, accounting for shoe track."""
-        if shoe_track_length_ft < 0 or shoe_track_length_ft >= self.total_depth_ft:
-            raise ValueError("Invalid shoe track length.")
+        shoe_track_vol_bbl = self.calculate_pipe_capacity_bbl(params.casing_id_in, params.shoe_track_length_ft)
+        displacement_vol_bbl = self.calculate_pipe_capacity_bbl(
+            params.casing_id_in, max(0.0, params.interval_length_ft - params.shoe_track_length_ft)
+        )
+        total_tail_slurry_bbl = tail_vol_bbl + shoe_track_vol_bbl
 
-        displacement_depth = self.total_depth_ft - shoe_track_length_ft
-        internal_capacity_bbl_ft = (self.casing_id**2) / 1029.4
-        displacement_vol = displacement_depth * internal_capacity_bbl_ft
-        return round(displacement_vol, 2)
+        if params.spacer_volume_override_bbl is not None:
+            spacer_vol_bbl = params.spacer_volume_override_bbl
+            spacer_method = "user_override"
+        else:
+            spacer_vol_bbl = self.calculate_annular_volume_bbl(
+                params.hole_diameter_in, params.casing_od_in,
+                params.spacer_annular_length_ft, washout_pct=0.0
+            )
+            spacer_method = "calculated_from_annular_length"
 
-    def calculate_hydrostatic_head_psi(
-        self, 
-        slurry_density_ppg: float, 
-        mud_density_ppg: float
-    ) -> Dict[str, float]:
-        """Calculates final bottomhole hydrostatic pressure post-cement placement."""
-        if slurry_density_ppg <= 0 or mud_density_ppg <= 0:
-            raise ValueError("Fluid densities must be positive non-zero values.")
+        tvd = params.true_vertical_depth_ft if params.true_vertical_depth_ft is not None else params.interval_length_ft
+        diff_hydrostatic_psi = (params.tail_slurry_density_ppg - params.displacement_fluid_density_ppg) * 0.052 * tvd
+        plug_bumping_pressure_psi = max(500.0, diff_hydrostatic_psi + 500.0)
 
-        cement_height_ft = self.total_depth_ft - self.top_of_cement_ft
-        mud_height_ft = self.top_of_cement_ft
-
-        p_cement = 0.052 * slurry_density_ppg * cement_height_ft
-        p_mud = 0.052 * mud_density_ppg * mud_height_ft
-        total_bhp_psi = p_cement + p_mud
+        suggested_additives = []
+        if params.bht_fahrenheit > 170.0:
+            suggested_additives.append(CEMENT_ADDITIVES_DB["Lignosulfonate"].model_dump())
+        else:
+            suggested_additives.append(CEMENT_ADDITIVES_DB["Calcium Chloride"].model_dump())
+        suggested_additives.append(CEMENT_ADDITIVES_DB["HEC Polymer"].model_dump())
 
         return {
-            "cement_hydrostatic_psi": round(p_cement, 2),
-            "mud_hydrostatic_psi": round(p_mud, 2),
-            "total_bottomhole_pressure_psi": round(total_bhp_psi, 2)
+            "lead_slurry_volume_bbl": round(lead_vol_bbl, 2),
+            "tail_slurry_volume_bbl": round(total_tail_slurry_bbl, 2),
+            "spacer_volume_bbl": round(spacer_vol_bbl, 2),
+            "spacer_calculation_method": spacer_method,
+            "spacer_annular_length_ft": params.spacer_annular_length_ft,
+            "displacement_volume_bbl": round(displacement_vol_bbl, 2),
+            "shoe_track_capacity_bbl": round(shoe_track_vol_bbl, 2),
+            "differential_hydrostatic_psi": round(diff_hydrostatic_psi, 2),
+            "recommended_plug_bumping_pressure_psi": round(plug_bumping_pressure_psi, 2),
+            "tvd_used_ft": round(tvd, 2),
+            "suggested_additives": suggested_additives,
+        }
+
+    def design_abandonment_plug(self, hole_dia_in, plug_length_ft, slurry_density_ppg, mud_density_ppg):
+        plug_vol_cu_ft = (math.pi / 4.0) * ((hole_dia_in**2) / 144.0) * plug_length_ft
+        plug_vol_bbl = plug_vol_cu_ft / 5.6146
+        sacks_of_cement = plug_vol_cu_ft / 1.18
+        hydrostatic_gain_psi = (slurry_density_ppg - mud_density_ppg) * 0.052 * plug_length_ft
+        return {
+            "plug_length_ft": plug_length_ft,
+            "plug_volume_bbl": round(plug_vol_bbl, 2),
+            "cement_sacks_required": math.ceil(sacks_of_cement),
+            "net_hydrostatic_gain_psi": round(hydrostatic_gain_psi, 2),
         }
