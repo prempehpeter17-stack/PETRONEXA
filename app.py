@@ -1,6 +1,6 @@
 """
 PetroNexa Streamlit Web Application Interface
-Complete Enterprise Edition: Auth, Custom Logo Branding, Hydraulics, Cementing, 3D Trajectory, AI Diagnostics, PDF Studio
+Operational UI Edition: Intuitive Gauges, Visual Status Cards, and Modern Engineering Layouts
 """
 import os
 import sys
@@ -31,17 +31,51 @@ except ModuleNotFoundError:
 # Path resolution for logo.png
 LOGO_PATH = os.path.join(REPO_ROOT, "logo.png")
 if not os.path.exists(LOGO_PATH):
-    # Secondary fallback check if logo sits inside /assets or /source
     alt_logo = os.path.join(REPO_ROOT, "assets", "logo.png")
     if os.path.exists(alt_logo):
         LOGO_PATH = alt_logo
 
 # Page Configuration
 st.set_page_config(
-    page_title="PetroNexa | Drilling Engineering Suite",
+    page_title="PetroNexa | Operations Control Center",
     page_icon="⚓",
     layout="wide"
 )
+
+# Custom Styling for Practical Operations Theme
+st.markdown("""
+<style>
+    .metric-card {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .status-ok {
+        background-color: #ecfdf5;
+        border-left: 5px solid #10b981;
+        padding: 12px;
+        border-radius: 6px;
+        color: #065f46;
+    }
+    .status-warn {
+        background-color: #fffbebf;
+        border-left: 5px solid #f59e0b;
+        padding: 12px;
+        border-radius: 6px;
+        color: #92400e;
+    }
+    .status-alert {
+        background-color: #fef2f2;
+        border-left: 5px solid #ef4444;
+        padding: 12px;
+        border-radius: 6px;
+        color: #991b1b;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Initialize Authentication State
 if "authenticated" not in st.session_state:
@@ -50,62 +84,57 @@ if "username" not in st.session_state:
     st.session_state["username"] = ""
 
 # ==========================================
-# AUTHENTICATION & LOGIN GATE
+# AUTHENTICATION PORTAL
 # ==========================================
 def render_login_screen():
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([1, 1.8, 1])
     with col2:
-        # Display Custom Logo Branding
+        st.markdown("<br><br>", unsafe_allow_html=True)
         if os.path.exists(LOGO_PATH):
             st.image(LOGO_PATH, use_container_width=True)
         else:
             st.markdown(
                 """
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <h1 style="color: #1E3A8A; font-size: 3rem; margin-bottom: 0;">⚓ PETRONEXA</h1>
-                    <p style="color: #6B7280; font-size: 1.1rem;">Optima Pro — Engineering & AI Suite</p>
+                <div style="text-align: center;">
+                    <h1 style="color: #1E3A8A; font-weight: 800; margin-bottom: 0;">⚓ PETRONEXA</h1>
+                    <p style="color: #64748B;">Operations & AI Decision Control Center</p>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
         
-        st.subheader("🔐 Secure Portal Login")
-        with st.form("login_form"):
-            user_input = st.text_input("Username / Engineer ID", value="engineer@petronexa.com")
-            password_input = st.text_input("Password", type="password", value="admin123")
-            submit_login = st.form_submit_button("Authenticate System", type="primary", use_container_width=True)
-
-            if submit_login:
+        with st.container():
+            st.markdown("#### 🔐 Secure Operations Sign-In")
+            user_input = st.text_input("Engineer ID / Username", value="engineer@petronexa.com")
+            password_input = st.text_input("Access Pin / Password", type="password", value="admin123")
+            
+            if st.button("Access Dashboard", type="primary", use_container_width=True):
                 if user_input and password_input:
                     st.session_state["authenticated"] = True
                     st.session_state["username"] = user_input
-                    st.success("Authentication successful! Redirecting...")
                     st.rerun()
                 else:
-                    st.error("Please provide valid login credentials.")
+                    st.error("Please enter authorized credentials.")
 
-# Render Login Screen if unauthenticated
 if not st.session_state["authenticated"]:
     render_login_screen()
     st.stop()
 
 # ==========================================
-# AUTHENTICATED WORKSPACE & NAVIGATION BAR
+# HEADER BAR & USER ACCOUNT
 # ==========================================
-
-# Header Bar with Integrated Logo and Fixed Logout Button
-header_col1, header_col2, header_col3 = st.columns([1, 4, 1.5])
+header_col1, header_col2, header_col3 = st.columns([0.8, 4, 1.2])
 
 with header_col1:
     if os.path.exists(LOGO_PATH):
-        st.image(LOGO_PATH, width=120)
+        st.image(LOGO_PATH, width=90)
 
 with header_col2:
-    st.markdown("## **PetroNexa Optima Pro**")
-    st.caption("Operational Engineering & AI Diagnostics Workspace")
+    st.markdown("<h2 style='margin:0; padding:0;'>PetroNexa | Operations Control Center</h2>", unsafe_allow_html=True)
+    st.caption("Real-Time Hydraulics, Directional Surveying & AI Hazard Intelligence Engine")
 
 with header_col3:
-    st.write(f"👤 **{st.session_state['username']}**")
+    st.markdown(f"👤 **{st.session_state['username']}**")
     if st.button("Log Out", type="secondary"):
         st.session_state["authenticated"] = False
         st.session_state["username"] = ""
@@ -113,87 +142,102 @@ with header_col3:
 
 st.markdown("---")
 
-# Navigation Tabs across all features
+# MAIN WORKSPACE TABS
 tab_hydraulics, tab_cementing, tab_3d, tab_ai, tab_pdf = st.tabs([
-    "💧 Drilling Hydraulics", 
-    "🧱 Cementing Operations", 
-    "🌐 3D Wellbore Trajectory", 
-    "🤖 AI Diagnostics",
-    "📄 PDF Report Studio"
+    "💧 Hydraulics Control", 
+    "🧱 Cementing Studio", 
+    "🌐 3D Well Path", 
+    "🤖 AI Hazard Monitor",
+    "📄 Report Center"
 ])
 
 # ==========================================
-# TAB 1: DRILLING HYDRAULICS
+# TAB 1: DRILLING HYDRAULICS (VISUAL CONTROLS)
 # ==========================================
 with tab_hydraulics:
-    st.subheader("Hydraulics & Rheology Configuration")
+    st.subheader("Hydraulics & Pressure Envelope")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        surface_mw = st.number_input("Surface Mud Weight (ppg)", min_value=0.1, value=12.0, step=0.1)
-        flow_rate = st.number_input("Flow Rate (GPM)", min_value=1.0, value=450.0, step=10.0)
-    with col2:
-        total_depth = st.number_input("Measured Depth - MD (ft)", min_value=1.0, value=10000.0, step=100.0)
-        tvd = st.number_input("True Vertical Depth - TVD (ft)", min_value=1.0, value=9500.0, step=100.0)
+    col_input, col_viz = st.columns([1.2, 2])
+    
+    with col_input:
+        st.markdown("##### 🎛️ Well Operations Parameters")
+        surface_mw = st.slider("Surface Mud Density (ppg)", 8.0, 18.0, 12.0, 0.1)
+        flow_rate = st.slider("Circulation Rate (GPM)", 100, 1200, 450, 25)
+        total_depth = st.number_input("Measured Depth - MD (ft)", value=10000.0, step=250.0)
+        tvd = st.number_input("True Vertical Depth - TVD (ft)", value=9500.0, step=250.0)
+        annular_dp = st.slider("Annular Friction Loss (psi)", 50, 1500, 350, 25)
 
-    st.markdown("#### Annular Friction Losses")
-    annular_dp = st.number_input("Total Annular Pressure Drop (psi)", min_value=0.0, value=350.0, step=25.0)
+        run_hyd = st.button("Run Hydraulics Calculation", type="primary", use_container_width=True)
 
-    if st.button("Calculate Hydraulics", type="primary"):
-        try:
-            engine = DrillingFluidEngine(
-                surface_mud_weight_ppg=surface_mw,
-                flow_rate_gpm=flow_rate,
-                total_depth_ft=total_depth,
-                true_vertical_depth_ft=tvd
-            )
-            ecd = engine.calculate_bottomhole_ecd(total_annular_dp_psi=annular_dp)
-            
-            st.success("Hydraulics calculations completed successfully.")
-            
-            res_col1, res_col2 = st.columns(2)
-            res_col1.metric("Equivalent Circulating Density (ECD)", f"{ecd} ppg")
-            res_col2.metric("Hydrostatic Pressure Baseline", f"{round(0.052 * surface_mw * tvd, 2)} psi")
+    with col_viz:
+        if run_hyd or True:  # Instant initial rendering
+            try:
+                engine = DrillingFluidEngine(
+                    surface_mud_weight_ppg=surface_mw,
+                    flow_rate_gpm=flow_rate,
+                    total_depth_ft=total_depth,
+                    true_vertical_depth_ft=tvd
+                )
+                ecd = engine.calculate_bottomhole_ecd(total_annular_dp_psi=annular_dp)
+                hydrostatic = round(0.052 * surface_mw * tvd, 2)
 
-            report_payload = {
-                "surface_mud_weight_ppg": surface_mw,
-                "flow_rate_gpm": flow_rate,
-                "total_depth_ft": total_depth,
-                "true_vertical_depth_ft": tvd,
-                "calculated_ecd_ppg": ecd
-            }
-            
-            pdf_bytes = ReportGenerator.generate_hydraulics_report(report_payload)
-            st.download_button(
-                label="📄 Download Hydraulics Report (PDF)",
-                data=pdf_bytes,
-                file_name="PetroNexa_Hydraulics_Report.pdf",
-                mime="application/pdf"
-            )
-        except ValueError as err:
-            st.error(f"⚠️ Engineering Validation Error: {str(err)}")
+                # Visual Gauges & KPI Summary Cards
+                kpi1, kpi2 = st.columns(2)
+                with kpi1:
+                    st.metric("Equivalent Circulating Density", f"{ecd} ppg", delta=f"{round(ecd - surface_mw, 2)} ppg delta")
+                with kpi2:
+                    st.metric("Bottomhole Hydrostatic", f"{hydrostatic} psi")
+
+                # Plotly Visual Gauge for Operational Safety Margin
+                fig_gauge = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=ecd,
+                    title={'text': "ECD Operating Gauge (ppg)"},
+                    gauge={
+                        'axis': {'range': [8.0, 20.0]},
+                        'bar': {'color': "#1E3A8A"},
+                        'steps': [
+                            {'range': [8.0, 10.0], 'color': "#dcfce7"},
+                            {'range': [10.0, 15.0], 'color': "#e0f2fe"},
+                            {'range': [15.0, 18.0], 'color': "#fef3c7"},
+                            {'range': [18.0, 20.0], 'color': "#fee2e2"}
+                        ],
+                        'threshold': {
+                            'line': {'color': "red", 'width': 4},
+                            'thickness': 0.75,
+                            'value': 17.5
+                        }
+                    }
+                ))
+                fig_gauge.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
+                st.plotly_chart(fig_gauge, use_container_width=True)
+
+            except Exception as err:
+                st.error(f"Calculation Error: {str(err)}")
 
 # ==========================================
 # TAB 2: CEMENTING OPERATIONS
 # ==========================================
 with tab_cementing:
-    st.subheader("Cementing Design & Volume Calculation")
+    st.subheader("Casing & Cementing Operations")
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        casing_od = st.number_input("Casing Outer Diameter (in)", min_value=1.0, value=7.0, step=0.125)
-        casing_id = st.number_input("Casing Inner Diameter (in)", min_value=0.5, value=6.151, step=0.125)
-        hole_size = st.number_input("Hole Diameter (in)", min_value=1.0, value=8.5, step=0.125)
-    with col_b:
-        cement_td = st.number_input("Total Depth - TD (ft)", min_value=1.0, value=12000.0, step=500.0, key="cem_td")
-        toc = st.number_input("Top of Cement - TOC (ft)", min_value=0.0, value=8000.0, step=500.0)
-        excess = st.number_input("Excess Volume Margin (%)", min_value=0.0, value=15.0, step=5.0)
+    c_col1, c_col2 = st.columns([1, 1])
+    
+    with c_col1:
+        st.markdown("##### 📐 Geometry & Depth Specs")
+        casing_od = st.selectbox("Casing Outer Diameter (in)", [9.625, 7.0, 5.5], index=1)
+        casing_id = st.number_input("Casing Inner Diameter (in)", value=6.151)
+        hole_size = st.selectbox("Hole Diameter (in)", [12.25, 8.5, 6.125], index=1)
+        cement_td = st.number_input("Total Depth - TD (ft)", value=12000.0)
+        toc = st.number_input("Top of Cement - TOC (ft)", value=8000.0)
+    
+    with c_col2:
+        st.markdown("##### 🧪 Slurry & Displacement Density")
+        slurry_mw = st.slider("Cement Slurry Density (ppg)", 12.0, 18.0, 15.8, 0.1)
+        displacement_mw = st.slider("Displacement Mud Weight (ppg)", 8.0, 15.0, 10.5, 0.1)
+        excess = st.slider("Open Hole Excess (%)", 0, 50, 15, 5)
 
-    st.markdown("#### Slurry & Fluid Densities")
-    slurry_mw = st.number_input("Cement Slurry Density (ppg)", min_value=1.0, value=15.8, step=0.2)
-    displacement_mw = st.number_input("Displacement Mud Weight (ppg)", min_value=1.0, value=10.5, step=0.2)
-
-    if st.button("Calculate Cementing Design", type="primary"):
+    if st.button("Compute Cementing Volumes", type="primary"):
         try:
             c_engine = CementingEngine(
                 casing_outer_diameter_in=casing_od,
@@ -202,7 +246,6 @@ with tab_cementing:
                 total_depth_ft=cement_td,
                 top_of_cement_ft=toc
             )
-
             slurry_vol = c_engine.calculate_slurry_volume_bbl(excess_percentage=excess)
             disp_vol = c_engine.calculate_displacement_volume_bbl(shoe_track_length_ft=80.0)
             bhp_results = c_engine.calculate_hydrostatic_head_psi(
@@ -210,147 +253,138 @@ with tab_cementing:
                 mud_density_ppg=displacement_mw
             )
 
-            st.success("Cementing design completed successfully.")
-            
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Required Slurry Volume", f"{slurry_vol} bbl")
-            m2.metric("Displacement Volume", f"{disp_vol} bbl")
-            m3.metric("Post-Job BHP", f"{bhp_results['total_bottomhole_pressure_psi']} psi")
+            st.markdown("---")
+            st.markdown("##### 📊 Computed Job Summary")
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Cement Slurry Volume", f"{slurry_vol} bbl")
+            r2.metric("Displacement Volume", f"{disp_vol} bbl")
+            r3.metric("Hydrostatic Pressure at Shoe", f"{bhp_results['total_bottomhole_pressure_psi']} psi")
 
-            cem_report_payload = {
-                "casing_od_in": casing_od,
-                "hole_diameter_in": hole_size,
-                "total_depth_ft": cement_td,
-                "top_of_cement_ft": toc,
-                "slurry_volume_bbl": slurry_vol,
-                "displacement_volume_bbl": disp_vol,
-                "bottomhole_hydrostatic_psi": bhp_results['total_bottomhole_pressure_psi']
-            }
-
-            cem_pdf_bytes = ReportGenerator.generate_hydraulics_report(cem_report_payload)
-            st.download_button(
-                label="📄 Download Cementing Job PDF",
-                data=cem_pdf_bytes,
-                file_name="PetroNexa_Cementing_Report.pdf",
-                mime="application/pdf"
-            )
-        except ValueError as err:
-            st.error(f"⚠️ Engineering Validation Error: {str(err)}")
+        except Exception as err:
+            st.error(f"Execution Error: {str(err)}")
 
 # ==========================================
-# TAB 3: 3D WELLBORE TRAJECTORY VISUALIZER
+# TAB 3: 3D WELLBORE TRAJECTORY
 # ==========================================
 with tab_3d:
-    st.subheader("3D Directional Survey Trajectory Profile")
-    
-    col_3d_a, col_3d_b = st.columns(2)
-    with col_3d_a:
-        kickoff_depth = st.number_input("Kickoff Point - KOP (ft)", min_value=0.0, value=2000.0, step=500.0)
-        max_inclination = st.number_input("Max Inclination (deg)", min_value=0.0, max_value=90.0, value=45.0, step=5.0)
-    with col_3d_b:
-        target_azimuth = st.number_input("Azimuth Direction (deg)", min_value=0.0, max_value=360.0, value=120.0, step=5.0)
-        total_md = st.number_input("Total Measured Depth (ft)", min_value=1000.0, value=10000.0, step=500.0)
+    st.subheader("Interactive 3D Directional Survey")
 
-    md_points = np.linspace(0, total_md, 100)
-    x_coords, y_coords, z_coords = [], [], []
-    azimuth_rad = np.radians(target_azimuth)
+    p_col1, p_col2 = st.columns([1, 2.5])
 
-    for md in md_points:
-        if md <= kickoff_depth:
-            inc = 0.0
-            tv_depth = md
-            offset = 0.0
-        else:
-            inc = np.radians(min(max_inclination, (md - kickoff_depth) * 0.01 * max_inclination))
-            tv_depth = kickoff_depth + (md - kickoff_depth) * np.cos(inc)
-            offset = (md - kickoff_depth) * np.sin(inc)
+    with p_col1:
+        st.markdown("##### 🧭 Survey Inputs")
+        kickoff_depth = st.slider("Kickoff Point - KOP (ft)", 500, 5000, 2000, 100)
+        max_inclination = st.slider("Max Inclination (°)", 0, 90, 45, 1)
+        target_azimuth = st.slider("Target Azimuth (°)", 0, 360, 120, 5)
+        total_md = st.number_input("Total MD (ft)", value=10000.0)
 
-        x_coords.append(offset * np.sin(azimuth_rad))
-        y_coords.append(offset * np.cos(azimuth_rad))
-        z_coords.append(-tv_depth)
+    with p_col2:
+        md_points = np.linspace(0, total_md, 100)
+        x_coords, y_coords, z_coords = [], [], []
+        azimuth_rad = np.radians(target_azimuth)
 
-    fig_3d = go.Figure(data=[go.Scatter3d(
-        x=x_coords, y=y_coords, z=z_coords,
-        mode='lines+markers',
-        line=dict(color='#1E3A8A', width=6),
-        marker=dict(size=3, color='#EF4444')
-    )])
+        for md in md_points:
+            if md <= kickoff_depth:
+                inc = 0.0
+                tv_depth = md
+                offset = 0.0
+            else:
+                inc = np.radians(min(max_inclination, (md - kickoff_depth) * 0.01 * max_inclination))
+                tv_depth = kickoff_depth + (md - kickoff_depth) * np.cos(inc)
+                offset = (md - kickoff_depth) * np.sin(inc)
 
-    fig_3d.update_layout(
-        scene=dict(
-            xaxis_title="Easting Offset (ft)",
-            yaxis_title="Northing Offset (ft)",
-            zaxis_title="TVD (ft)",
-            camera=dict(eye=dict(x=1.5, y=1.5, z=1.2))
-        ),
-        margin=dict(l=0, r=0, b=0, t=30),
-        height=500
-    )
+            x_coords.append(offset * np.sin(azimuth_rad))
+            y_coords.append(offset * np.cos(azimuth_rad))
+            z_coords.append(-tv_depth)
 
-    st.plotly_chart(fig_3d, use_container_width=True)
+        fig_3d = go.Figure(data=[go.Scatter3d(
+            x=x_coords, y=y_coords, z=z_coords,
+            mode='lines+markers',
+            line=dict(color='#0284c7', width=6),
+            marker=dict(size=3, color='#f43f5e')
+        )])
+
+        fig_3d.update_layout(
+            scene=dict(
+                xaxis_title="Easting (ft)",
+                yaxis_title="Northing (ft)",
+                zaxis_title="TVD (ft)",
+                camera=dict(eye=dict(x=1.4, y=1.4, z=1.0))
+            ),
+            margin=dict(l=0, r=0, b=0, t=10),
+            height=480
+        )
+        st.plotly_chart(fig_3d, use_container_width=True)
 
 # ==========================================
-# TAB 4: AI DRILLING ASSISTANT
+# TAB 4: AI HAZARD MONITOR
 # ==========================================
 with tab_ai:
-    st.subheader("AI Telemetry Monitor & Dynamic Hazard Diagnostics")
+    st.subheader("AI Rig Telemetry & Hazard Diagnostic Center")
 
-    ai_col1, ai_col2 = st.columns(2)
-    with ai_col1:
-        telemetry_spp = st.number_input("Standpipe Pressure - SPP (psi)", min_value=0.0, value=2800.0, step=50.0)
-        telemetry_rpm = st.number_input("Bit Speed - RPM", min_value=0.0, value=120.0, step=5.0)
-    with ai_col2:
-        telemetry_torque = st.number_input("Torque (ft-lbs)", min_value=0.0, value=14000.0, step=500.0)
-        gas_units = st.number_input("Background Gas (Units)", min_value=0.0, value=45.0, step=5.0)
+    tele_col, alert_col = st.columns([1.2, 1.8])
 
-    if st.button("Run AI Diagnostic Analysis", type="primary"):
-        st.markdown("#### AI Advisory Verdict")
-        hazards = []
-        if telemetry_spp > 3500:
-            hazards.append("⚠️ **High SPP Threshold Exceeded:** Risk of flow channel restrictions or bit nozzle plugging.")
-        if telemetry_torque > 18000 and telemetry_rpm < 80:
-            hazards.append("🚨 **Stick-Slip Risk:** High torque paired with reduced RPM indicates downhole drag.")
-        if gas_units > 150:
-            hazards.append("🔥 **Kick Warning:** Elevated background gas detected. Check pit levels.")
+    with tele_col:
+        st.markdown("##### 📡 Live Rig Telemetry Simulation")
+        spp = st.number_input("Standpipe Pressure - SPP (psi)", value=2800.0, step=100.0)
+        rpm = st.slider("Bit Rotary Speed (RPM)", 0, 250, 120)
+        torque = st.number_input("Top Drive Torque (ft-lbs)", value=14000.0, step=500.0)
+        gas = st.number_input("Background Gas (Units)", value=45.0, step=5.0)
+
+    with alert_col:
+        st.markdown("##### 🛡️ AI Operational Health Verdict")
         
+        hazards = []
+        if spp > 3500:
+            hazards.append(("HIGH SPP DETECTED", "Pressure exceeds 3500 psi limit. Inspect bit nozzles or flow path for restriction."))
+        if torque > 18000 and rpm < 80:
+            hazards.append(("STICK-SLIP RISK", "High torque combined with low RPM indicates severe downhole drag or mechanical binding."))
+        if gas > 150:
+            hazards.append(("WELL INFLUX / KICK WARNING", "Gas levels exceeding safe threshold. Perform flow check immediately."))
+
         if hazards:
-            for h in hazards:
-                st.warning(h)
+            for title, desc in hazards:
+                st.markdown(f"""
+                <div class="status-alert">
+                    <strong>🚨 {title}</strong><br>
+                    <small>{desc}</small>
+                </div><br>
+                """, unsafe_allow_html=True)
         else:
-            st.success("✅ **Normal Telemetry:** Wellbore parameters are within safe operating limits.")
+            st.markdown("""
+            <div class="status-ok">
+                <strong>✅ Safe Operational Window</strong><br>
+                <small>All telemetry parameters are within nominal safety thresholds.</small>
+            </div>
+            """, unsafe_allow_html=True)
 
 # ==========================================
 # TAB 5: PDF REPORT STUDIO
 # ==========================================
 with tab_pdf:
-    st.subheader("Comprehensive Technical Report Studio")
-    st.write("Generate custom compiled engineering PDF summary sheets on demand.")
+    st.subheader("Automated Engineering PDF Exporter")
 
-    report_title = st.text_input("Project / Well Name", value="Well PetroNexa-01 Core Summary")
-    operator = st.text_input("Operator Name", value="PetroNexa Operations")
+    pdf_col1, pdf_col2 = st.columns(2)
+    with pdf_col1:
+        well_id = st.text_input("Well Name / ID", value="Well PetroNexa-01 Summary")
+        operator_id = st.text_input("Operator / Service Company", value="PetroNexa Operations")
     
-    col_pdf_1, col_pdf_2 = st.columns(2)
-    with col_pdf_1:
-        pdf_md = st.number_input("Target MD (ft)", value=10000.0)
-        pdf_tvd = st.number_input("Target TVD (ft)", value=9500.0)
-    with col_pdf_2:
-        pdf_mw = st.number_input("Mud Weight (ppg)", value=12.2)
-        pdf_flow = st.number_input("Circulation Rate (GPM)", value=480.0)
+    with pdf_col2:
+        pdf_md_val = st.number_input("Total MD (ft)", value=10000.0)
+        pdf_mw_val = st.number_input("Mud Density (ppg)", value=12.2)
 
-    if st.button("Generate Master Technical PDF", type="primary"):
-        custom_payload = {
-            "well_name": report_title,
-            "operator": operator,
-            "target_md_ft": pdf_md,
-            "target_tvd_ft": pdf_tvd,
-            "mud_weight_ppg": pdf_mw,
-            "flow_rate_gpm": pdf_flow
+    if st.button("Generate & Download PDF Executive Report", type="primary"):
+        payload = {
+            "well_name": well_id,
+            "operator": operator_id,
+            "target_md_ft": pdf_md_val,
+            "mud_weight_ppg": pdf_mw_val,
+            "flow_rate_gpm": 450.0
         }
-        
-        compiled_pdf = ReportGenerator.generate_hydraulics_report(custom_payload)
+        pdf_data = ReportGenerator.generate_hydraulics_report(payload)
         st.download_button(
-            label="💾 Download Master PDF Document",
-            data=compiled_pdf,
-            file_name=f"{report_title.replace(' ', '_')}_Report.pdf",
+            label="💾 Save PDF Document",
+            data=pdf_data,
+            file_name=f"{well_id.replace(' ', '_')}.pdf",
             mime="application/pdf"
         )
