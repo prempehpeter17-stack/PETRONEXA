@@ -81,7 +81,8 @@ class DrillingHydraulicsEngine:
 
         sorted_segments = sorted(self.segments, key=lambda s: s.top_depth_ft)
 
-        if sorted_segments[0].top_depth_ft != 0.0:
+        # Consistent float-tolerance check at surface
+        if not math.isclose(sorted_segments[0].top_depth_ft, 0.0, abs_tol=1e-2):
             raise ValueError(f"First segment must start at surface (0 ft), found {sorted_segments[0].top_depth_ft} ft.")
 
         for i in range(len(sorted_segments) - 1):
@@ -140,8 +141,8 @@ class DrillingHydraulicsEngine:
 
         return max(0.0, dp_ft * seg.length_ft)
 
-    def solve(self, validate_continuity: bool = False) -> Dict[str, Any]:
-        """Calculates total hydraulic losses, hydrostatic pressure, and ECD."""
+    def solve(self, validate_continuity: bool = True) -> Dict[str, Any]:
+        """Calculates total hydraulic losses, hydrostatic pressure, and ECD. Defaults to strict continuity checks."""
         if not self.segments:
             raise ValueError("No well segments added to hydraulics engine.")
 
@@ -198,15 +199,23 @@ class DiagnosticEngine:
     def analyze_telemetry(
         self, 
         physics_metrics: Dict[str, Any], 
+        pore_limit: float,
+        frac_limit: float,
         baseline_esd_ppg: Optional[float] = None,
         historical_esd: Optional[float] = None
     ) -> Dict[str, Any]:
         """
-        Analyzes output metrics against static baselines and safety thresholds.
-        Accepts `baseline_esd_ppg` or fallback `historical_esd`.
+        Analyzes output metrics against static baselines and explicit safety thresholds.
+        Requires explicit `pore_limit` and `frac_limit` to prevent ungrounded engineering fallbacks.
         """
+        if pore_limit is None or frac_limit is None:
+            raise ValueError(
+                "Pore-pressure and fracture-gradient limits must be explicitly provided "
+                "for hydraulic safety diagnostics."
+            )
+
         ecd = physics_metrics.get("ecd_ppg", 0.0)
-        spp = physics_metrics.get("standpipe_pressure_psi", 0.0)
+        spp = physics_metrics.get("standpipe_pressure_psi")
 
         # Resolve static baseline parameter
         base_density = baseline_esd_ppg if baseline_esd_ppg is not None else historical_esd
@@ -215,27 +224,63 @@ class DiagnosticEngine:
 
         delta_ecd = ecd - base_density
         flags = []
-        severity = "NORMAL"
+        severity = "GREEN"
+        matched_hazard = "None"
+        recommendations = []
 
-        # Check ECD Delta Thresholds
-        if delta_ecd >= self.ecd_threshold_delta:
-            severity = "HIGH_RISK"
+        # Check Pressure Window Bounds
+        if ecd < pore_limit:
+            severity = "RED"
+            matched_hazard = "Underbalanced / Kick Risk"
+            flags.append(f"ECD ({ecd:.2f} ppg) below formation pore pressure gradient ({pore_limit:.2f} ppg).")
+            recommendations.append("Increase mud weight or reduce flow rate immediately to suppress potential influx.")
+        elif ecd > frac_limit:
+            severity = "RED"
+            matched_hazard = "Formation Fracture / Severe Losses"
+            flags.append(f"ECD ({ecd:.2f} ppg) exceeds formation fracture limit ({frac_limit:.2f} ppg).")
+            recommendations.append("Reduce flow rate and mud density to avoid inducing losses into the formation.")
+        elif delta_ecd >= self.ecd_threshold_delta:
+            severity = "YELLOW"
+            matched_hazard = "Excessive Annular Friction Spike"
             flags.append(f"ECD surge detected (+{round(delta_ecd, 2)} ppg over static baseline). Risk of formation fracturing.")
+            recommendations.append("Monitor cuttings loading and evaluate hole cleaning sweeps.")
         elif delta_ecd > 0.8:
-            severity = "WARNING"
-            flags.append(f"Moderate friction surge (+{round(delta_ecd, 2)} ppg). Monitor hole cleaning and cuttings loading.")
+            severity = "YELLOW"
+            matched_hazard = "Moderate Friction Surge"
+            flags.append(f"Moderate friction surge (+{round(delta_ecd, 2)} ppg). Monitor hole cleaning.")
+            recommendations.append("Perform high-viscosity pill sweep and track ECD trends.")
 
-        # Check Standpipe Pressure Limit
-        if spp > self.max_spp:
-            severity = "HIGH_RISK"
-            flags.append(f"Standpipe Pressure ({round(spp, 1)} psi) exceeds maximum safety limit ({self.max_spp} psi).")
+        # Evaluate SPP strictly when available
+        if spp is not None and spp > self.max_spp:
+            severity = "RED" if severity != "RED" else severity
+            matched_hazard = "Standpipe Pressure Excursion"
+            flags.append(f"Standpipe Pressure ({round(spp, 1)} psi) exceeds maximum limit ({self.max_spp} psi).")
+            recommendations.append("Inspect surface equipment and check pipe for downhole restriction/packing.")
+
+        if not recommendations:
+            recommendations.append("Maintain standard flow rate and fluid properties within configured window.")
+
+        detailed_diagnosis = (
+            " ".join(flags) if flags 
+            else f"Hydraulic state stable. Dynamic ECD of {ecd:.2f} ppg remains within configured limits."
+        )
 
         return {
+            # Base engine metrics
             "status": severity,
+            "severity": severity,
             "delta_ecd_ppg": round(delta_ecd, 2),
             "baseline_esd_ppg": round(base_density, 2),
             "calculated_ecd_ppg": ecd,
             "standpipe_pressure_psi": spp,
             "flags": flags,
-            "recommendation": "Maintain flow rate" if severity == "NORMAL" else "Consider reducing flow rate or sweeping hole."
+            "recommendation": recommendations[0],
+
+            # PDF Generator Contract Fields
+            "pore_limit": round(pore_limit, 2),
+            "frac_limit": round(frac_limit, 2),
+            "matched_hazard": matched_hazard,
+            "detailed_diagnosis": detailed_diagnosis,
+            "actionable_recommendations": recommendations,
+            "annular_dp_status": "CALCULATED",
         }
