@@ -3,7 +3,7 @@ PetroNexa Physics Engine: Drilling Hydraulics & Diagnostic Analytics.
 Pure-Python calculations isolated from presentation and web layers.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import math
 
@@ -27,6 +27,10 @@ class WellSegment:
             raise ValueError(f"Segment '{self.name}' pipe OD ({self.pipe_od_in}) must exceed ID ({self.pipe_id_in}).")
         if self.hole_id_in <= self.pipe_od_in:
             raise ValueError(f"Segment '{self.name}' hole ID ({self.hole_id_in}) must exceed pipe OD ({self.pipe_od_in}).")
+        if self.mud_weight_ppg <= 0:
+            raise ValueError(f"Segment '{self.name}' mud weight must be positive.")
+        if self.viscosity_cp < 0 or self.yield_point_lb_100ft2 < 0:
+            raise ValueError(f"Segment '{self.name}' rheology parameters cannot be negative.")
 
 
 class DrillingHydraulicsEngine:
@@ -42,7 +46,9 @@ class DrillingHydraulicsEngine:
     ):
         if surface_mud_weight_ppg <= 0 or flow_rate_gpm <= 0 or total_depth_ft <= 0:
             raise ValueError("Mud weight, flow rate, and total depth must be strictly positive.")
-            
+        if plastic_viscosity_cp < 0 or yield_point_lb_100ft2 < 0:
+            raise ValueError("Plastic viscosity and yield point cannot be negative.")
+
         self.mw = surface_mud_weight_ppg
         self.q = flow_rate_gpm
         self.td = total_depth_ft
@@ -64,21 +70,38 @@ class DrillingHydraulicsEngine:
         return self.q / pipe_area if pipe_area > 0 else 0.0
 
     def _calc_annular_friction_loss(self, seg: WellSegment) -> float:
-        """Calculate annular pressure loss (psi) using Bingham Plastic model."""
-        v_a = self.area_velocity = self._calc_annular_velocity(seg.hole_id_in, seg.pipe_od_in)
+        """
+        Calculates annular pressure loss (psi) using standard Bingham Plastic hydraulics model,
+        incorporating effective viscosity, Reynolds number, and flow regime determination.
+        """
+        v_a = self._calc_annular_velocity(seg.hole_id_in, seg.pipe_od_in)
+        if v_a <= 0:
+            return 0.0
+
         d_h = seg.hole_id_in - seg.pipe_od_in
         
-        # Effective viscosity (Bingham Plastic approximation)
-        mu_e = seg.viscosity_cp + (5.0 * seg.yield_point_lb_100ft2 * d_h / max(v_a, 1.0))
+        # Effective viscosity (cp) for Bingham Plastic fluid in annulus
+        mu_e = seg.viscosity_cp + ((5.0 * seg.yield_point_lb_100ft2 * d_h) / v_a)
         
-        # Friction factor & pressure gradient (psi/ft)
-        dp_ft = ((seg.mud_weight_ppg * v_a**2) / (25.8 * d_h * 10000.0)) + (
-            (seg.yield_point_lb_100ft2 + (seg.viscosity_cp * v_a / (300.0 * d_h))) / (300.0 * d_h)
-        )
+        # Effective Reynolds number in annular geometry
+        reynolds = (928.0 * seg.mud_weight_ppg * v_a * d_h) / max(0.1, mu_e)
+
+        # Pressure gradient determination (psi/ft)
+        if reynolds < 2100.0:
+            # Laminar flow regime
+            dp_ft = (
+                (seg.viscosity_cp * v_a / (1000.0 * (d_h**2))) 
+                + (seg.yield_point_lb_100ft2 / (200.0 * d_h))
+            )
+        else:
+            # Turbulent flow regime (Fanning friction factor approximation)
+            f_factor = 0.0791 / (reynolds**0.25)
+            dp_ft = (f_factor * seg.mud_weight_ppg * (v_a**2)) / (25.8 * d_h * 10000.0)
+
         return max(0.0, dp_ft * seg.length_ft)
 
     def solve(self) -> Dict[str, Any]:
-        """Calculates total hydraulic losses, ECD, and bit hydraulic horsepower."""
+        """Calculates total hydraulic losses, hydrostatic pressure, and ECD."""
         if not self.segments:
             raise ValueError("No well segments added to hydraulics engine.")
 
@@ -89,7 +112,7 @@ class DrillingHydraulicsEngine:
             ann_dp = self._calc_annular_friction_loss(seg)
             total_annular_dp += ann_dp
             av = self._calc_annular_velocity(seg.hole_id_in, seg.pipe_od_in)
-            
+
             segment_breakdown.append({
                 "segment_name": seg.name,
                 "length_ft": seg.length_ft,
@@ -97,14 +120,14 @@ class DrillingHydraulicsEngine:
                 "annular_dp_psi": round(ann_dp, 2)
             })
 
-        # Equivalent Circulating Density (ECD) in ppg
-        ecd_ppg = self.mw + (total_annular_dp / (0.052 * self.td))
-        
         # Hydrostatic Pressure in psi
         hydrostatic_psi = 0.052 * self.mw * self.td
-        
+
         # Total Bottom Hole Pressure in psi
         total_bhp_psi = hydrostatic_psi + total_annular_dp
+
+        # Equivalent Circulating Density (ECD) in ppg
+        ecd_ppg = self.mw + (total_annular_dp / (0.052 * self.td))
 
         return {
             "surface_mud_weight_ppg": self.mw,
@@ -128,15 +151,20 @@ class DiagnosticEngine:
     def analyze_telemetry(
         self, 
         physics_metrics: Dict[str, Any], 
+        baseline_esd_ppg: Optional[float] = None,
         historical_esd: Optional[float] = None
     ) -> Dict[str, Any]:
         """
-        Analyzes output metrics against historical baselines and safety thresholds.
-        `historical_esd` represents Equivalent Static Density (baseline mud weight in ppg).
+        Analyzes output metrics against static baselines and safety thresholds.
+        Accepts `baseline_esd_ppg` or fallback `historical_esd`.
         """
         ecd = physics_metrics.get("ecd_ppg", 0.0)
-        base_density = historical_esd if historical_esd is not None else physics_metrics.get("surface_mud_weight_ppg", 0.0)
         
+        # Resolve static baseline parameter
+        base_density = baseline_esd_ppg if baseline_esd_ppg is not None else historical_esd
+        if base_density is None:
+            base_density = physics_metrics.get("surface_mud_weight_ppg", 0.0)
+
         delta_ecd = ecd - base_density
         flags = []
         severity = "NORMAL"
@@ -151,7 +179,7 @@ class DiagnosticEngine:
         return {
             "status": severity,
             "delta_ecd_ppg": round(delta_ecd, 2),
-            "baseline_esd_ppg": base_density,
+            "baseline_esd_ppg": round(base_density, 2),
             "calculated_ecd_ppg": ecd,
             "flags": flags,
             "recommendation": "Maintain flow rate" if severity == "NORMAL" else "Consider reducing flow rate or sweeping hole."
