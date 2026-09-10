@@ -1,67 +1,52 @@
 """
-Handles pore pressure and fracture gradient profiles.
+Pore Pressure & Fracture Gradient Calculations.
 """
+from typing import Dict, List, Any
 
-import numpy as np
-from typing import List, Dict, Any, Optional
 
-class PressureGradientProfile:
-    def __init__(self, depths: List[float], pore_pressures: List[float], frac_gradients: List[float]):
-        """
-        Initialize with depth, pore pressure (ppg), and fracture gradient (ppg) arrays.
-        All arrays must be same length and sorted by depth.
-        """
-        if not (len(depths) == len(pore_pressures) == len(frac_gradients)):
-            raise ValueError("All arrays must have same length.")
-        if len(depths) == 0:
-            raise ValueError("At least one data point required.")
-        # Ensure sorted
-        self.depths = np.array(sorted(depths))
-        # Reorder other arrays accordingly
-        idx = np.argsort(depths)
-        self.pore = np.array(pore_pressures)[idx]
-        self.frac = np.array(frac_gradients)[idx]
-        self._validate()
+def calculate_eaton_pore_pressure(
+    overburden_gradient_ppg: float,
+    normal_pore_pressure_ppg: float,
+    observed_dt: float,
+    normal_dt: float,
+    eaton_exponent: float = 1.2,
+) -> float:
+    """Calculates pore pressure via Eaton's Sonic Log method."""
+    if observed_dt <= 0 or normal_dt <= 0:
+        raise ValueError("Sonic transit times must be strictly positive.")
+    
+    dt_ratio = (normal_dt / observed_dt) ** eaton_exponent
+    pp_ppg = overburden_gradient_ppg - (overburden_gradient_ppg - normal_pore_pressure_ppg) * dt_ratio
+    return round(pp_ppg, 2)
 
-    def _validate(self):
-        """Check that pore < fracture at each depth."""
-        for i in range(len(self.depths)):
-            if self.pore[i] >= self.frac[i]:
-                raise ValueError(f"Pore pressure ({self.pore[i]}) >= Fracture gradient ({self.frac[i]}) at depth {self.depths[i]}")
 
-    def get_pore_at_depth(self, depth: float) -> float:
-        """Interpolate pore pressure at given depth."""
-        return float(np.interp(depth, self.depths, self.pore))
+def calculate_hubbert_willis_frac_gradient(
+    pore_pressure_ppg: float,
+    overburden_gradient_ppg: float,
+    poisson_ratio: float = 0.25,
+) -> float:
+    """Calculates formation fracture gradient using Hubbert & Willis theory."""
+    k0 = poisson_ratio / (1.0 - poisson_ratio)
+    fg_ppg = pore_pressure_ppg + k0 * (overburden_gradient_ppg - pore_pressure_ppg)
+    return round(fg_ppg, 2)
 
-    def get_frac_at_depth(self, depth: float) -> float:
-        """Interpolate fracture gradient at given depth."""
-        return float(np.interp(depth, self.depths, self.frac))
 
-    def get_safe_window(self, depth: float) -> Dict[str, float]:
-        """
-        Return safe mud weight window.
-        Returns min (pore + 0.3 ppg safety) and max (fracture - 0.2 ppg).
-        """
-        pore = self.get_pore_at_depth(depth)
-        frac = self.get_frac_at_depth(depth)
-        return {
-            "min_mw_ppg": pore + 0.3,
-            "max_mw_ppg": frac - 0.2,
-            "pore": pore,
-            "fracture": frac
-        }
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "depths": self.depths.tolist(),
-            "pore_pressures": self.pore.tolist(),
-            "frac_gradients": self.frac.tolist()
-        }
-
-    @classmethod
-    def from_dataframe(cls, df):
-        """Create profile from a DataFrame with columns Depth, Pore, Fracture."""
-        depths = df["Depth"].tolist()
-        pore = df["Pore"].tolist()
-        frac = df["Fracture"].tolist()
-        return cls(depths, pore, frac)
+def evaluate_pressure_window(
+    depth_intervals: List[float],
+    pore_pressures: List[float],
+    frac_gradients: List[float],
+) -> List[Dict[str, Any]]:
+    """Evaluates safe drilling mud weight windows across depth intervals."""
+    window_data = []
+    for depth, pp, fg in zip(depth_intervals, pore_pressures, frac_gradients):
+        min_mw = pp + 0.5  # 0.5 ppg safety margin over pore pressure
+        max_mw = fg - 0.2  # 0.2 ppg safety margin below fracture gradient
+        window_data.append({
+            "depth_ft": depth,
+            "pore_pressure_ppg": pp,
+            "fracture_gradient_ppg": fg,
+            "recommended_min_mw_ppg": round(min_mw, 2),
+            "recommended_max_mw_ppg": round(max_mw, 2),
+            "window_margin_ppg": round(max_mw - min_mw, 2),
+        })
+    return window_data
