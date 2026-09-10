@@ -1,4 +1,3 @@
-# cementing_engine.py
 """
 Primary Cementing & P&A Engineering Calculations Engine – PetroNexa
 All volumes calculated dynamically from geometry (no hard-coded spacer).
@@ -6,6 +5,9 @@ All volumes calculated dynamically from geometry (no hard-coded spacer).
 import math
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
+
+# Standard conversion factor for cubic feet to barrels
+CUFT_PER_BBL = 5.614583333333333
 
 
 class Additive(BaseModel):
@@ -20,7 +22,7 @@ CEMENT_ADDITIVES_DB: Dict[str, Additive] = {
         name="Lignosulfonate",
         category="Retarder",
         recommended_concentration_pct=0.3,
-        description="Extends slurry thickening time for high bottom-hole temperatures (>170F).",
+        description="Extends slurry thickening time for high bottom-hole temperatures (>170°F).",
     ),
     "Calcium Chloride": Additive(
         name="Calcium Chloride",
@@ -67,20 +69,22 @@ class CementingEngine:
         hole_dia_in: float, casing_od_in: float, length_ft: float, washout_pct: float = 0.0
     ) -> float:
         if hole_dia_in <= casing_od_in:
-            raise ValueError("Hole diameter must be greater than casing outer diameter.")
+            raise ValueError(f"Hole diameter ({hole_dia_in} in) must be greater than casing OD ({casing_od_in} in).")
         we = washout_pct / 100.0
         vol_cu_ft = (math.pi / 4.0) * ((hole_dia_in**2 - casing_od_in**2) / 144.0) * length_ft * (1.0 + we)
-        return vol_cu_ft / 5.6146
+        return vol_cu_ft / CUFT_PER_BBL
 
     @staticmethod
     def calculate_pipe_capacity_bbl(pipe_id_in: float, length_ft: float) -> float:
         vol_cu_ft = (math.pi / 4.0) * ((pipe_id_in**2) / 144.0) * length_ft
-        return vol_cu_ft / 5.6146
+        return vol_cu_ft / CUFT_PER_BBL
 
     @staticmethod
-    def compare_with_industry(software_results, casing_od, hole_dia, interval_length):
+    def compare_with_industry(software_results: Dict[str, Any], casing_od: float = None, hole_dia: float = None, interval_length: float = None):
+        """Unified interface for industry benchmark comparison."""
         from benchmarks import compare_cementing_results
-        return compare_cementing_results(software_results, casing_od, hole_dia, interval_length)
+        # Accepts single dictionary payload matching benchmarks.py interface
+        return compare_cementing_results(software_results)
 
     def design_primary_job(self, params: PrimaryCementingInput) -> Dict[str, Any]:
         lead_length = max(0.0, params.interval_length_ft - params.tail_slurry_length_ft)
@@ -137,11 +141,17 @@ class CementingEngine:
             "suggested_additives": suggested_additives,
         }
 
-    def design_abandonment_plug(self, hole_dia_in, plug_length_ft, slurry_density_ppg, mud_density_ppg):
+    def design_abandonment_plug(
+        self, hole_dia_in: float, plug_length_ft: float, slurry_density_ppg: float, mud_density_ppg: float
+    ) -> Dict[str, Any]:
+        if hole_dia_in <= 0 or plug_length_ft <= 0:
+            raise ValueError("Hole diameter and plug length must be strictly positive.")
+
         plug_vol_cu_ft = (math.pi / 4.0) * ((hole_dia_in**2) / 144.0) * plug_length_ft
-        plug_vol_bbl = plug_vol_cu_ft / 5.6146
-        sacks_of_cement = plug_vol_cu_ft / 1.18
+        plug_vol_bbl = plug_vol_cu_ft / CUFT_PER_BBL
+        sacks_of_cement = plug_vol_cu_ft / 1.18  # Standard yield ~1.18 cu ft/sack
         hydrostatic_gain_psi = (slurry_density_ppg - mud_density_ppg) * 0.052 * plug_length_ft
+
         return {
             "plug_length_ft": plug_length_ft,
             "plug_volume_bbl": round(plug_vol_bbl, 2),
