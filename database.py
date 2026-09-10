@@ -1,46 +1,66 @@
-"""Database models and async session management for PetroNexa."""
-from datetime import datetime, timezone
-import os
+"""
+Database session management and ORM models for PetroNexa.
+"""
+from datetime import datetime
+from typing import AsyncGenerator
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text
+from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import String, Integer, ForeignKey, DateTime, JSON
 from config import settings
 
-DATABASE_URL = settings.database_url
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_async_engine(DATABASE_URL, echo=False, connect_args=connect_args)
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+engine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    pool_size=20,
+    max_overflow=10,
+    pool_pre_ping=True,
+)
 
-class Base(DeclarativeBase):
-    pass
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
+
+Base = declarative_base()
+
 
 class UserModel(Base):
     __tablename__ = "users"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
-    email: Mapped[str] = mapped_column(String(150), unique=True, index=True)
-    hashed_password: Mapped[str] = mapped_column(String(255))
-    role: Mapped[str] = mapped_column(String(40), default="drilling_engineer")
-    company_name: Mapped[str] = mapped_column(String(150), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
 
-class Project(Base):
-    __tablename__ = "projects"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String(120), index=True)
-    well_name: Mapped[str] = mapped_column(String(120), default="")
-    field_name: Mapped[str] = mapped_column(String(120), default="")
-    rig_name: Mapped[str] = mapped_column(String(120), default="")
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    trajectory_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    owner = relationship("UserModel", back_populates="projects")
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(80), nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(String(40), default="drilling_engineer")
+    company_name = Column(String(150), default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-async def init_db() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    simulations = relationship("SimulationModel", back_populates="owner", cascade="all, delete-orphan")
 
-async def get_db():
+
+class SimulationModel(Base):
+    __tablename__ = "simulations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    title = Column(String(150), nullable=False)
+    simulation_type = Column(String(50), nullable=False)  # 'hydraulics', 'cementing', 'well_control'
+    input_parameters = Column(Text, nullable=False)  # JSON payload
+    output_results = Column(Text, nullable=False)  # JSON payload
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    owner = relationship("UserModel", back_populates="simulations")
+
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
