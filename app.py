@@ -10,7 +10,7 @@ import streamlit as st
 from sqlalchemy import select, or_
 from sqlalchemy.exc import IntegrityError
 
-# Module Imports (Engineering Backbone Intact)
+# Module Imports
 from database import init_db, AsyncSessionLocal, UserModel
 from auth import get_password_hash, verify_password
 from physics import DrillingHydraulicsEngine, WellSegment, DiagnosticEngine
@@ -151,7 +151,6 @@ def validate_hydraulics_inputs(
     yp: float,
     segments_df: pd.DataFrame,
 ) -> list:
-    """Validates physical and geometrical parameters before hydraulics calculations."""
     errors = []
 
     if total_depth <= 0:
@@ -217,8 +216,9 @@ def evaluate_drilling_safety(results: dict, target_depth: float, gradient_df: pd
     gdf = gradient_df.copy().apply(pd.to_numeric, errors="coerce").dropna()
     pore_limit = 9.0
     frac_limit = 15.0
-    gradient_source = "Default limits (9.0 / 15.0 ppg)"
+    gradient_source = "Default Screening Limits (9.0 / 15.0 ppg)"
     gradient_error = None
+    is_fallback = True
 
     if not gdf.empty:
         try:
@@ -230,7 +230,8 @@ def evaluate_drilling_safety(results: dict, target_depth: float, gradient_df: pd
             safe_win = profile.get_safe_window(target_depth)
             frac_limit = safe_win["fracture"]
             pore_limit = safe_win["pore"]
-            gradient_source = "Configured pressure-gradient profile"
+            gradient_source = "Configured Pressure-Gradient Profile"
+            is_fallback = False
         except Exception as exc:
             gradient_error = str(exc)
 
@@ -245,6 +246,7 @@ def evaluate_drilling_safety(results: dict, target_depth: float, gradient_df: pd
     diag_res.update({
         "gradient_source": gradient_source,
         "gradient_error": gradient_error,
+        "is_fallback": is_fallback,
     })
     return diag_res
 
@@ -447,7 +449,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "3D Well Trajectory",
     "Drilling Diagnostics",
     "Cementing Design",
-    "PDF Export",
+    "Generate Engineering Technical Report",
 ])
 
 # ---------- TAB 1: HYDRAULICS MATRIX ----------
@@ -491,7 +493,6 @@ with tab1:
                         yield_point_lb_100ft2=yp,
                     )
 
-                    # Build contiguous top_depth -> bottom_depth intervals
                     current_top_ft = 0.0
                     for _, row in edited_segments.iterrows():
                         seg_length = float(row["Length (ft)"])
@@ -515,7 +516,6 @@ with tab1:
                     results = engine.solve()
                     st.session_state.latest_results = results
 
-                    # Run Safety Diagnostics
                     diag_obj = evaluate_drilling_safety(results, total_depth, st.session_state.gradient_df)
                     st.session_state.latest_diagnostics = diag_obj
 
@@ -560,7 +560,6 @@ with tab2:
     with tc5:
         azimuth_deg = st.number_input("Azimuth Angle (deg)", value=60.0, min_value=0.0, max_value=360.0, step=10.0)
 
-    # TRAJECTORY INTERVAL & BOUNDARY VALIDATION
     traj_errors = []
     if kop_ft <= 0:
         traj_errors.append("Kick-Off Point (KOP) must be greater than zero.")
@@ -637,8 +636,8 @@ with tab3:
         )
 
         st.caption(f"**Gradient Basis**: {diag.get('gradient_source', 'N/A')}")
-        if diag.get("gradient_error"):
-            st.warning(f"⚠️ Gradient profile evaluation unfulfilled ({diag['gradient_error']}). Fallback safety limits applied.")
+        if diag.get("is_fallback"):
+            st.warning("⚠️ Gradient profile evaluation unfulfilled or unconfigured. Unverified default screening limits applied (9.0 / 15.0 ppg).")
 
         severity = diag.get("severity", "GREEN")
         matched_hazard = diag.get("matched_hazard", "None")
@@ -731,7 +730,6 @@ with tab4:
 
                 st.metric("Recommended Plug Bumping Pressure", f"{result['recommended_plug_bumping_pressure_psi']:.1f} psi")
 
-                # BENCHMARK COMPARISON
                 st.markdown('<div class="section-title" style="margin-top:1.4rem;"><i class="fas fa-balance-scale"></i> Historical Cementing Benchmarks</div>', unsafe_allow_html=True)
                 benchmarks = compare_cementing_results(result)
                 st.dataframe(pd.DataFrame(benchmarks), use_container_width=True)
@@ -742,7 +740,7 @@ with tab4:
 
 # ---------- TAB 5: PDF EXPORT ----------
 with tab5:
-    st.markdown('<div class="section-title"><i class="fas fa-file-pdf"></i> Generate Engineering Report & Compliance Summary</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title"><i class="fas fa-file-pdf"></i> Generate Engineering Technical Report</div>', unsafe_allow_html=True)
 
     if st.session_state.latest_results is not None and st.session_state.latest_diagnostics is not None:
         if st.button("Export Engineering PDF", type="primary", use_container_width=True):
