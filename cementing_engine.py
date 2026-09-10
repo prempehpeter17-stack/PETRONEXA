@@ -1,10 +1,10 @@
 """
-Primary Cementing & P&A Engineering Calculations Engine – PetroNexa
-All volumes calculated dynamically from geometry (no hard-coded spacer).
+Primary Cementing & P&A Volume Calculation Engine – PetroNexa
+Hardened v1.0 engine with strict geometric parameter validation and field safety bounds.
 """
 import math
 from typing import Dict, Any, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Standard conversion factor for cubic feet to barrels
 CUFT_PER_BBL = 5.614583333333333
@@ -46,10 +46,10 @@ CEMENT_ADDITIVES_DB: Dict[str, Additive] = {
 
 
 class PrimaryCementingInput(BaseModel):
-    hole_diameter_in: float = Field(..., gt=0)
-    casing_od_in: float = Field(..., gt=0)
-    casing_id_in: float = Field(..., gt=0)
-    interval_length_ft: float = Field(..., gt=0)
+    hole_diameter_in: float = Field(..., gt=0, description="Wellbore diameter in inches")
+    casing_od_in: float = Field(..., gt=0, description="Casing Outer Diameter in inches")
+    casing_id_in: float = Field(..., gt=0, description="Casing Inner Diameter in inches")
+    interval_length_ft: float = Field(..., gt=0, description="Total cemented section interval in feet")
     washout_factor_pct: float = Field(default=15.0, ge=0)
     shoe_track_length_ft: float = Field(default=40.0, ge=0)
     lead_slurry_density_ppg: float = Field(default=12.5, gt=0)
@@ -57,10 +57,37 @@ class PrimaryCementingInput(BaseModel):
     spacer_density_ppg: float = Field(default=11.0, gt=0)
     displacement_fluid_density_ppg: float = Field(default=10.0, gt=0)
     tail_slurry_length_ft: float = Field(default=500.0, ge=0)
-    bht_fahrenheit: float = Field(default=180.0, ge=0)
+    bht_fahrenheit: float = Field(default=180.0, gt=32.0, description="Bottom Hole Temperature in °F")
     spacer_annular_length_ft: float = Field(default=500.0, ge=0)
     spacer_volume_override_bbl: Optional[float] = Field(default=None, ge=0)
     true_vertical_depth_ft: Optional[float] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_geometries_and_intervals(self) -> "PrimaryCementingInput":
+        # 1. Physical Casing Checks
+        if self.casing_od_in <= self.casing_id_in:
+            raise ValueError(
+                f"Invalid casing geometry: Casing OD ({self.casing_od_in} in) "
+                f"must be strictly greater than Casing ID ({self.casing_id_in} in)."
+            )
+        if self.hole_diameter_in <= self.casing_od_in:
+            raise ValueError(
+                f"Invalid wellbore geometry: Hole diameter ({self.hole_diameter_in} in) "
+                f"must be strictly greater than Casing OD ({self.casing_od_in} in)."
+            )
+
+        # 2. Section Length Checks
+        if self.tail_slurry_length_ft > self.interval_length_ft:
+            raise ValueError(
+                f"Invalid slurry design: Tail slurry length ({self.tail_slurry_length_ft} ft) "
+                f"cannot exceed total interval length ({self.interval_length_ft} ft)."
+            )
+        if self.shoe_track_length_ft > self.interval_length_ft:
+            raise ValueError(
+                f"Invalid shoe track: Shoe track length ({self.shoe_track_length_ft} ft) "
+                f"cannot exceed total interval length ({self.interval_length_ft} ft)."
+            )
+        return self
 
 
 class CementingEngine:
@@ -80,14 +107,18 @@ class CementingEngine:
         return vol_cu_ft / CUFT_PER_BBL
 
     @staticmethod
-    def compare_with_industry(software_results: Dict[str, Any], casing_od: float = None, hole_dia: float = None, interval_length: float = None):
+    def compare_with_industry(
+        software_results: Dict[str, Any],
+        casing_od: float = None,
+        hole_dia: float = None,
+        interval_length: float = None
+    ):
         """Unified interface for industry benchmark comparison."""
         from benchmarks import compare_cementing_results
-        # Accepts single dictionary payload matching benchmarks.py interface
         return compare_cementing_results(software_results)
 
     def design_primary_job(self, params: PrimaryCementingInput) -> Dict[str, Any]:
-        lead_length = max(0.0, params.interval_length_ft - params.tail_slurry_length_ft)
+        lead_length = params.interval_length_ft - params.tail_slurry_length_ft
 
         tail_vol_bbl = self.calculate_annular_volume_bbl(
             params.hole_diameter_in, params.casing_od_in,
@@ -102,7 +133,7 @@ class CementingEngine:
 
         shoe_track_vol_bbl = self.calculate_pipe_capacity_bbl(params.casing_id_in, params.shoe_track_length_ft)
         displacement_vol_bbl = self.calculate_pipe_capacity_bbl(
-            params.casing_id_in, max(0.0, params.interval_length_ft - params.shoe_track_length_ft)
+            params.casing_id_in, params.interval_length_ft - params.shoe_track_length_ft
         )
         total_tail_slurry_bbl = tail_vol_bbl + shoe_track_vol_bbl
 
@@ -139,17 +170,22 @@ class CementingEngine:
             "recommended_plug_bumping_pressure_psi": round(plug_bumping_pressure_psi, 2),
             "tvd_used_ft": round(tvd, 2),
             "suggested_additives": suggested_additives,
+            "additive_disclaimer": (
+                "Preliminary additive suggestions are heuristic rules based on thermal ranges. "
+                "Verify all slurry compositions via lab testing and approved service-company procedures."
+            )
         }
 
     def design_abandonment_plug(
         self, hole_dia_in: float, plug_length_ft: float, slurry_density_ppg: float, mud_density_ppg: float
     ) -> Dict[str, Any]:
+        """Calculates volume requirements and hydrostatic differential for P&A cement plugs."""
         if hole_dia_in <= 0 or plug_length_ft <= 0:
             raise ValueError("Hole diameter and plug length must be strictly positive.")
 
         plug_vol_cu_ft = (math.pi / 4.0) * ((hole_dia_in**2) / 144.0) * plug_length_ft
         plug_vol_bbl = plug_vol_cu_ft / CUFT_PER_BBL
-        sacks_of_cement = plug_vol_cu_ft / 1.18  # Standard yield ~1.18 cu ft/sack
+        sacks_of_cement = plug_vol_cu_ft / 1.18  # Standard baseline yield ~1.18 cu ft/sack
         hydrostatic_gain_psi = (slurry_density_ppg - mud_density_ppg) * 0.052 * plug_length_ft
 
         return {
@@ -157,4 +193,5 @@ class CementingEngine:
             "plug_volume_bbl": round(plug_vol_bbl, 2),
             "cement_sacks_required": math.ceil(sacks_of_cement),
             "net_hydrostatic_gain_psi": round(hydrostatic_gain_psi, 2),
+            "scope_note": "P&A plug volumetric calculation only. Final barrier verification requires regulatory approval."
         }
