@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 # Module Imports (Engineering Backbone Intact)
 from database import init_db, AsyncSessionLocal, UserModel
 from auth import get_password_hash, verify_password
-from physics import DrillingHydraulicsEngine, WellSegment, NozzleInput, RheologyModel
+from physics import DrillingHydraulicsEngine, WellSegment, DiagnosticEngine
 from cementing_engine import PrimaryCementingInput, CementingEngine
 from pdf_generator import generate_pdf_payload
 from mud_parser import parse_mud_report
@@ -212,8 +212,9 @@ def validate_hydraulics_inputs(
 # ============================
 # TRANSPARENT SAFETY EVALUATOR
 # ============================
-def evaluate_drilling_safety(ecd: float, target_depth: float, gradient_df: pd.DataFrame):
+def evaluate_drilling_safety(results: dict, target_depth: float, gradient_df: pd.DataFrame):
     """Evaluates ECD relative to pore and fracture pressures dynamically with source tracking."""
+    ecd = results.get("ecd_ppg", 0.0)
     gdf = gradient_df.copy().apply(pd.to_numeric, errors="coerce").dropna()
     pore_limit = 9.0
     frac_limit = 15.0
@@ -234,38 +235,36 @@ def evaluate_drilling_safety(ecd: float, target_depth: float, gradient_df: pd.Da
         except Exception as exc:
             gradient_error = str(exc)
 
-    if ecd > frac_limit:
-        status_res = {
-            "status": "CRITICAL",
-            "severity": "RED",
-            "matched_hazard": "Formation Fracturing Risk",
-            "message": f"ECD ({ecd:.2f} ppg) exceeds formation fracture gradient ({frac_limit:.2f} ppg) at target depth.",
-            "recommendation": "Review pump displacement rate, rheology parameters, and mud-weight program to restore hydraulic operating window.",
-        }
-    elif ecd < pore_limit:
-        status_res = {
-            "status": "UNDERBALANCED",
-            "severity": "YELLOW",
-            "matched_hazard": "Underbalanced Influx Risk",
-            "message": f"ECD ({ecd:.2f} ppg) is below estimated formation pore pressure ({pore_limit:.2f} ppg).",
-            "recommendation": "Adjust mud density or circulation parameters to secure required hydrostatic overbalance.",
-        }
-    else:
-        status_res = {
-            "status": "OPTIMAL",
-            "severity": "GREEN",
-            "matched_hazard": "None",
-            "message": f"ECD ({ecd:.2f} ppg) is within configured Pore ({pore_limit:.2f} ppg) and Fracture ({frac_limit:.2f} ppg) design boundaries.",
-            "recommendation": "Hydraulics window is within configured design limits. Continue operations under standard well-control protocol.",
-        }
+    diag_engine = DiagnosticEngine()
+    diag_res = diag_engine.analyze_telemetry(results, baseline_esd_ppg=results.get("surface_mud_weight_ppg"))
 
-    status_res.update({
+    if ecd > frac_limit:
+        severity = "RED"
+        matched_hazard = "Formation Fracturing Risk"
+        msg = f"ECD ({ecd:.2f} ppg) exceeds formation fracture gradient ({frac_limit:.2f} ppg) at target depth."
+        rec = "Review pump displacement rate, rheology parameters, and mud-weight program to restore hydraulic operating window."
+    elif ecd < pore_limit:
+        severity = "YELLOW"
+        matched_hazard = "Underbalanced Influx Risk"
+        msg = f"ECD ({ecd:.2f} ppg) is below estimated formation pore pressure ({pore_limit:.2f} ppg)."
+        rec = "Adjust mud density or circulation parameters to secure required hydrostatic overbalance."
+    else:
+        severity = "GREEN"
+        matched_hazard = "None"
+        msg = f"ECD ({ecd:.2f} ppg) is within configured Pore ({pore_limit:.2f} ppg) and Fracture ({frac_limit:.2f} ppg) design boundaries."
+        rec = "Hydraulics window is within configured design limits. Continue operations under standard well-control protocol."
+
+    diag_res.update({
+        "severity": severity,
+        "matched_hazard": matched_hazard,
+        "message": msg,
+        "recommendation": rec,
         "pore_limit": pore_limit,
         "frac_limit": frac_limit,
         "gradient_source": gradient_source,
         "gradient_error": gradient_error,
     })
-    return status_res
+    return diag_res
 
 
 # ============================
@@ -414,7 +413,6 @@ with st.sidebar:
     with st.expander("Mud Properties", expanded=True):
         default_mw = st.session_state.auto_mw if st.session_state.auto_mw is not None else 12.5
         surface_mw = st.number_input("Surface Mud Weight (ppg)", value=default_mw, step=0.1)
-        rheology = st.selectbox("Rheology Model", [r.value for r in RheologyModel])
         default_pv = st.session_state.auto_pv if st.session_state.auto_pv is not None else 22.0
         default_yp = st.session_state.auto_yp if st.session_state.auto_yp is not None else 16.0
         pv = st.number_input("Plastic Viscosity (cP)", value=default_pv, step=1.0)
@@ -479,12 +477,6 @@ with tab1:
     )
     st.session_state["segments_df"] = edited_segments
 
-    c_n1, c_n2 = st.columns([1, 1])
-    with c_n1:
-        nozzle_count = st.number_input("Number of Bit Nozzles", value=3, min_value=1, max_value=8)
-    with c_n2:
-        nozzle_size = st.number_input("Nozzle Size (in 1/32 in)", value=12, min_value=6, max_value=32)
-
     total_seg_length = edited_segments["Length (ft)"].sum() if "Length (ft)" in edited_segments.columns else 0.0
     if abs(total_seg_length - total_depth) > 1.0:
         st.warning(f"⚠️ Drill-string segment total ({total_seg_length:,.0f} ft) does not match configured well MD ({total_depth:,.0f} ft). Verify geometry before proceeding.")
@@ -510,10 +502,8 @@ with tab1:
                         surface_mud_weight_ppg=surface_mw,
                         flow_rate_gpm=flow_rate,
                         total_depth_ft=total_depth,
-                        true_vertical_depth_ft=tvd,
                         plastic_viscosity_cp=pv,
                         yield_point_lb_100ft2=yp,
-                        rheology_model=RheologyModel(rheology),
                     )
                     for _, row in edited_segments.iterrows():
                         engine.add_segment(
@@ -528,15 +518,12 @@ with tab1:
                                 yield_point_lb_100ft2=yp,
                             )
                         )
-                    for _ in range(int(nozzle_count)):
-                        engine.add_nozzle(NozzleInput(size_in_32nds=int(nozzle_size)))
 
                     results = engine.solve()
                     st.session_state.latest_results = results
 
-                    # Run Shared Safety Diagnostics
-                    ecd = results["equivalent_circulating_density_ecd_ppg"]
-                    diag_obj = evaluate_drilling_safety(ecd, total_depth, st.session_state.gradient_df)
+                    # Run Safety Diagnostics
+                    diag_obj = evaluate_drilling_safety(results, total_depth, st.session_state.gradient_df)
                     st.session_state.latest_diagnostics = diag_obj
 
                     st.session_state.sim_metadata = {
@@ -549,13 +536,13 @@ with tab1:
 
                     c1, c2, c3, c4 = st.columns(4)
                     with c1:
-                        st.markdown(f'<div class="metric-card"><div class="label">ECD (at TVD)</div><div class="value">{results["equivalent_circulating_density_ecd_ppg"]:.3f} ppg</div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="metric-card"><div class="label">ECD</div><div class="value">{results["ecd_ppg"]:.2f} ppg</div></div>', unsafe_allow_html=True)
                     with c2:
-                        st.markdown(f'<div class="metric-card"><div class="label">Standpipe Pressure</div><div class="value">{results["standpipe_pressure_spp_psi"]:.1f} psi</div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="metric-card"><div class="label">Bottom Hole Pressure</div><div class="value">{results["bottom_hole_pressure_psi"]:.1f} psi</div></div>', unsafe_allow_html=True)
                     with c3:
-                        st.markdown(f'<div class="metric-card"><div class="label">Annular Pressure Loss</div><div class="value">{results["total_annular_pressure_loss_psi"]:.1f} psi</div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="metric-card"><div class="label">Annular Pressure Loss</div><div class="value">{results["total_annular_dp_psi"]:.1f} psi</div></div>', unsafe_allow_html=True)
                     with c4:
-                        st.markdown(f'<div class="metric-card"><div class="label">Bit Pressure Drop</div><div class="value">{results["bit_hydraulics"]["bit_pressure_drop_psi"]:.1f} psi</div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="metric-card"><div class="label">Hydrostatic Pressure</div><div class="value">{results["hydrostatic_pressure_psi"]:.1f} psi</div></div>', unsafe_allow_html=True)
 
                     st.markdown('<div class="section-title" style="margin-top:1.6rem;"><i class="fas fa-list-ul"></i> Segment Breakdown</div>', unsafe_allow_html=True)
                     st.dataframe(pd.DataFrame(results["segment_breakdown"]), use_container_width=True)
@@ -660,15 +647,19 @@ with tab3:
         if diag.get("gradient_error"):
             st.warning(f"⚠️ Gradient profile evaluation unfulfilled ({diag['gradient_error']}). Fallback safety limits applied.")
 
-        if diag["status"] == "CRITICAL":
+        if diag.get("status") == "CRITICAL" or diag.get("severity") == "RED":
             st.error(f"**CRITICAL EXCURSION**: {diag['message']}")
             st.write(f"• **Recommended Action**: {diag['recommendation']}")
-        elif diag["status"] == "UNDERBALANCED":
-            st.warning(f"**UNDERBALANCED RISK**: {diag['message']}")
+        elif diag.get("status") == "WARNING" or diag.get("status") == "UNDERBALANCED" or diag.get("severity") == "YELLOW":
+            st.warning(f"**RISK WARNING**: {diag['message']}")
             st.write(f"• **Recommended Action**: {diag['recommendation']}")
         else:
             st.success(f"**SAFE OPERATING WINDOW**: {diag['message']}")
             st.write(f"• **Operational Status**: {diag['recommendation']}")
+            
+        if diag.get("flags"):
+            for flag in diag["flags"]:
+                st.info(f"🚩 {flag}")
     else:
         st.info("Execute hydraulics simulation in the Hydraulics Matrix tab to render diagnostics.")
 
@@ -764,9 +755,9 @@ with tab5:
 
                 diag = st.session_state.latest_diagnostics
                 diag_meta = {
-                    "severity": diag["severity"],
-                    "matched_hazard": diag["matched_hazard"],
-                    "detailed_diagnosis": diag["message"],
+                    "severity": diag.get("severity", "NORMAL"),
+                    "matched_hazard": diag.get("matched_hazard", "None"),
+                    "detailed_diagnosis": diag.get("message", "Calculations completed successfully."),
                 }
 
                 pdf_buffer = generate_pdf_payload(
