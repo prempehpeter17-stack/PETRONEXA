@@ -140,7 +140,7 @@ html.theme-dark .stale-badge, [data-theme="dark"] .stale-badge { background: #45
 
 
 # ============================
-# INPUT VALIDATION GUARDRAILS
+# DEFENSIVE INPUT VALIDATOR
 # ============================
 def validate_hydraulics_inputs(
     total_depth: float,
@@ -151,7 +151,7 @@ def validate_hydraulics_inputs(
     yp: float,
     segments_df: pd.DataFrame,
 ) -> list:
-    """Validates physical and geometrical parameters before running hydraulics calculations."""
+    """Validates physical and geometrical parameters before hydraulics calculations."""
     errors = []
 
     if total_depth <= 0:
@@ -170,41 +170,55 @@ def validate_hydraulics_inputs(
         errors.append("Yield Point cannot be negative.")
 
     required_columns = ["Length (ft)", "Pipe OD (in)", "Pipe ID (in)", "Hole ID (in)", "Mud Weight (ppg)"]
-    for col in required_columns:
-        if col not in segments_df.columns:
-            errors.append(f"Missing drill string column: {col}")
+    missing = [col for col in required_columns if col not in segments_df.columns]
+    if missing:
+        errors.extend([f"Missing drill string column: {col}" for col in missing])
+        return errors
 
-    if not segments_df.empty and len(errors) == 0:
-        for idx, row in segments_df.iterrows():
-            seg_num = idx + 1
-            length = float(row.get("Length (ft)", 0))
-            p_od = float(row.get("Pipe OD (in)", 0))
-            p_id = float(row.get("Pipe ID (in)", 0))
-            h_id = float(row.get("Hole ID (in)", 0))
-            m_wt = float(row.get("Mud Weight (ppg)", 0))
+    if segments_df.empty:
+        errors.append("At least one drill-string segment is required.")
+        return errors
 
-            if length <= 0:
-                errors.append(f"Segment {seg_num}: Length must be greater than zero.")
-            if p_id <= 0:
-                errors.append(f"Segment {seg_num}: Pipe ID must be greater than zero.")
-            if p_od <= p_id:
-                errors.append(f"Segment {seg_num}: Pipe OD ({p_od:.3f} in) must be strictly greater than Pipe ID ({p_id:.3f} in).")
-            if h_id <= p_od:
-                errors.append(f"Segment {seg_num}: Hole ID ({h_id:.3f} in) must be strictly greater than Pipe OD ({p_od:.3f} in).")
-            if m_wt <= 0:
-                errors.append(f"Segment {seg_num}: Mud Weight must be greater than zero.")
+    for idx, row in segments_df.iterrows():
+        seg_num = idx + 1
+        try:
+            length = float(row["Length (ft)"])
+            p_od = float(row["Pipe OD (in)"])
+            p_id = float(row["Pipe ID (in)"])
+            h_id = float(row["Hole ID (in)"])
+            m_wt = float(row["Mud Weight (ppg)"])
+        except (TypeError, ValueError):
+            errors.append(f"Segment {seg_num}: all geometry and mud-property values must be numeric.")
+            continue
+
+        if not np.isfinite([length, p_od, p_id, h_id, m_wt]).all():
+            errors.append(f"Segment {seg_num}: values must be finite numbers.")
+            continue
+
+        if length <= 0:
+            errors.append(f"Segment {seg_num}: Length must be greater than zero.")
+        if p_id <= 0:
+            errors.append(f"Segment {seg_num}: Pipe ID must be greater than zero.")
+        if p_od <= p_id:
+            errors.append(f"Segment {seg_num}: Pipe OD ({p_od:.3f} in) must be greater than Pipe ID ({p_id:.3f} in).")
+        if h_id <= p_od:
+            errors.append(f"Segment {seg_num}: Hole ID ({h_id:.3f} in) must be greater than Pipe OD ({p_od:.3f} in).")
+        if m_wt <= 0:
+            errors.append(f"Segment {seg_num}: Mud Weight must be greater than zero.")
 
     return errors
 
 
 # ============================
-# UNIFIED SAFETY EVALUATOR
+# TRANSPARENT SAFETY EVALUATOR
 # ============================
 def evaluate_drilling_safety(ecd: float, target_depth: float, gradient_df: pd.DataFrame):
-    """Evaluates ECD relative to pore and fracture pressures dynamically."""
+    """Evaluates ECD relative to pore and fracture pressures dynamically with source tracking."""
     gdf = gradient_df.copy().apply(pd.to_numeric, errors="coerce").dropna()
     pore_limit = 9.0
     frac_limit = 15.0
+    gradient_source = "Default limits (9.0 / 15.0 ppg)"
+    gradient_error = None
 
     if not gdf.empty:
         try:
@@ -216,71 +230,84 @@ def evaluate_drilling_safety(ecd: float, target_depth: float, gradient_df: pd.Da
             safe_win = profile.get_safe_window(target_depth)
             frac_limit = safe_win["fracture"]
             pore_limit = safe_win["pore"]
-        except Exception:
-            pass
+            gradient_source = "Configured pressure-gradient profile"
+        except Exception as exc:
+            gradient_error = str(exc)
 
     if ecd > frac_limit:
-        return {
+        status_res = {
             "status": "CRITICAL",
             "severity": "RED",
-            "pore_limit": pore_limit,
-            "frac_limit": frac_limit,
             "matched_hazard": "Formation Fracturing Risk",
             "message": f"ECD ({ecd:.2f} ppg) exceeds formation fracture gradient ({frac_limit:.2f} ppg) at target depth.",
             "recommendation": "Review pump displacement rate, rheology parameters, and mud-weight program to restore hydraulic operating window.",
         }
     elif ecd < pore_limit:
-        return {
+        status_res = {
             "status": "UNDERBALANCED",
             "severity": "YELLOW",
-            "pore_limit": pore_limit,
-            "frac_limit": frac_limit,
             "matched_hazard": "Underbalanced Influx Risk",
             "message": f"ECD ({ecd:.2f} ppg) is below estimated formation pore pressure ({pore_limit:.2f} ppg).",
             "recommendation": "Adjust mud density or circulation parameters to secure required hydrostatic overbalance.",
         }
     else:
-        return {
+        status_res = {
             "status": "OPTIMAL",
             "severity": "GREEN",
-            "pore_limit": pore_limit,
-            "frac_limit": frac_limit,
             "matched_hazard": "None",
             "message": f"ECD ({ecd:.2f} ppg) is within configured Pore ({pore_limit:.2f} ppg) and Fracture ({frac_limit:.2f} ppg) design boundaries.",
             "recommendation": "Hydraulics window is within configured design limits. Continue operations under standard well-control protocol.",
         }
+
+    status_res.update({
+        "pore_limit": pore_limit,
+        "frac_limit": frac_limit,
+        "gradient_source": gradient_source,
+        "gradient_error": gradient_error,
+    })
+    return status_res
 
 
 # ============================
 # AUTHENTICATION ENGINE
 # ============================
 async def process_authentication(mode, email_val, password_val, company_val=None):
+    email_val = email_val.strip().lower()
+    username_val = email_val.split("@")[0].strip()
+
     async with AsyncSessionLocal() as session:
         if mode == "Register Account":
             try:
+                if len(password_val) < 8:
+                    return False, "Password must be at least 8 characters long."
+
                 existing = await session.execute(
                     select(UserModel).where(
-                        or_(UserModel.email == email_val, UserModel.username == email_val)
+                        or_(
+                            UserModel.email == email_val,
+                            UserModel.username == username_val,
+                        )
                     )
                 )
                 if existing.scalar_one_or_none():
                     return False, "Email or username already registered."
+
                 hashed_pw = get_password_hash(password_val)
                 new_user = UserModel(
-                    username=email_val.split("@")[0],
+                    username=username_val,
                     email=email_val,
                     hashed_password=hashed_pw,
-                    company_name=company_val or "Enterprise Hydrocarbons Corp",
+                    company_name=(company_val or "Enterprise Hydrocarbons Corp").strip(),
                 )
                 session.add(new_user)
                 await session.commit()
                 return True, "Account registered! Please switch mode to Login."
             except IntegrityError:
                 await session.rollback()
-                return False, "Registration failed: duplicate entity."
-            except Exception as e:
+                return False, "Registration failed: email or username already exists."
+            except Exception:
                 await session.rollback()
-                return False, f"Error: {str(e)}"
+                return False, "Registration failed. Please check your details and try again."
         else:
             try:
                 result = await session.execute(
@@ -295,8 +322,8 @@ async def process_authentication(mode, email_val, password_val, company_val=None
                         "company": user.company_name,
                     }
                 return False, "Invalid email or password."
-            except Exception as e:
-                return False, f"Login Error: {str(e)}"
+            except Exception:
+                return False, "Login failed. Please check your details and try again."
 
 
 if not st.session_state.authenticated:
@@ -460,7 +487,7 @@ with tab1:
 
     total_seg_length = edited_segments["Length (ft)"].sum() if "Length (ft)" in edited_segments.columns else 0.0
     if abs(total_seg_length - total_depth) > 1.0:
-        st.warning(f"Total segment length ({total_seg_length:,.0f} ft) does not equal Total Depth MD ({total_depth:,.0f} ft).")
+        st.warning(f"⚠️ Drill-string segment total ({total_seg_length:,.0f} ft) does not match configured well MD ({total_depth:,.0f} ft). Verify geometry before proceeding.")
 
     if st.button("Run Hydraulics Simulation", type="primary", use_container_width=True):
         validation_errors = validate_hydraulics_inputs(
@@ -629,6 +656,10 @@ with tab3:
             unsafe_allow_html=True,
         )
 
+        st.caption(f"**Gradient Basis**: {diag.get('gradient_source', 'N/A')}")
+        if diag.get("gradient_error"):
+            st.warning(f"⚠️ Gradient profile evaluation unfulfilled ({diag['gradient_error']}). Fallback safety limits applied.")
+
         if diag["status"] == "CRITICAL":
             st.error(f"**CRITICAL EXCURSION**: {diag['message']}")
             st.write(f"• **Recommended Action**: {diag['recommendation']}")
@@ -652,23 +683,32 @@ with tab4:
         casing_od = st.number_input("Casing OD (in)", value=7.0, min_value=2.0, step=0.5)
         casing_id = st.number_input("Casing ID (in)", value=6.276, min_value=1.0, step=0.1)
         interval_ft = st.number_input("Cemented Interval (ft)", value=5000.0, step=100.0)
-        washout_pct = st.number_input("Washout (%)", value=15.0, step=1.0)
-        shoe_track = st.number_input("Shoe Track (ft)", value=40.0, step=5.0)
+        washout_pct = st.number_input("Washout (%)", value=15.0, min_value=0.0, step=1.0)
+        shoe_track = st.number_input("Shoe Track (ft)", value=40.0, min_value=0.0, step=5.0)
     with c2:
-        lead_dens = st.number_input("Lead Density (ppg)", value=12.5, step=0.1)
-        tail_dens = st.number_input("Tail Density (ppg)", value=15.8, step=0.1)
-        spacer_dens = st.number_input("Spacer Density (ppg)", value=11.0, step=0.1)
-        disp_dens = st.number_input("Displacement Fluid Density (ppg)", value=10.0, step=0.1)
-        tail_length = st.number_input("Tail Length (ft)", value=500.0, step=50.0)
-        bht = st.number_input("Bottom Hole Temp (°F)", value=180.0, step=5.0)
+        lead_dens = st.number_input("Lead Density (ppg)", value=12.5, min_value=1.0, step=0.1)
+        tail_dens = st.number_input("Tail Density (ppg)", value=15.8, min_value=1.0, step=0.1)
+        spacer_dens = st.number_input("Spacer Density (ppg)", value=11.0, min_value=1.0, step=0.1)
+        disp_dens = st.number_input("Displacement Fluid Density (ppg)", value=10.0, min_value=1.0, step=0.1)
+        tail_length = st.number_input("Tail Length (ft)", value=500.0, min_value=1.0, step=50.0)
+        bht = st.number_input("Bottom Hole Temp (°F)", value=180.0, min_value=32.0, step=5.0)
 
-    spacer_length = st.number_input("Spacer Annular Length (ft)", value=500.0, step=50.0)
+    spacer_length = st.number_input("Spacer Annular Length (ft)", value=500.0, min_value=0.0, step=50.0)
 
     if st.button("Run Cementing Calculation", type="primary", use_container_width=True):
+        cement_errors = []
         if casing_od <= casing_id:
-            st.error("Casing OD must be strictly greater than Casing ID.")
-        elif hole_dia <= casing_od:
-            st.error("Hole Diameter must be strictly greater than Casing OD.")
+            cement_errors.append("Casing OD must be strictly greater than Casing ID.")
+        if hole_dia <= casing_od:
+            cement_errors.append("Hole Diameter must be strictly greater than Casing OD.")
+        if interval_ft <= 0:
+            cement_errors.append("Cemented interval length must be greater than zero.")
+        if tail_length > interval_ft:
+            cement_errors.append(f"Tail slurry length ({tail_length:,.0f} ft) cannot exceed cemented interval ({interval_ft:,.0f} ft).")
+
+        if cement_errors:
+            for err in cement_errors:
+                st.error(err)
         else:
             try:
                 params = PrimaryCementingInput(
@@ -700,7 +740,7 @@ with tab4:
 
                 st.metric("Recommended Plug Bumping Pressure", f"{result['recommended_plug_bumping_pressure_psi']:.1f} psi")
 
-                # BENCHMARK COMPARISON RE-INTEGRATION
+                # BENCHMARK COMPARISON
                 st.markdown('<div class="section-title" style="margin-top:1.4rem;"><i class="fas fa-balance-scale"></i> Historical Cementing Benchmarks</div>', unsafe_allow_html=True)
                 benchmarks = compare_cementing_results(result)
                 st.dataframe(pd.DataFrame(benchmarks), use_container_width=True)
