@@ -1,6 +1,6 @@
 """
 PetroNexa Streamlit Web Application Interface
-Operational UI Edition: Intuitive Gauges, Visual Status Cards, and Modern Engineering Layouts
+Operational UI Edition: Fixed StreamlitDuplicateElementId with explicit keys
 """
 import os
 import sys
@@ -42,7 +42,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom Styling for Practical Operations Theme
+# Custom Styling
 st.markdown("""
 <style>
     .metric-card {
@@ -60,13 +60,6 @@ st.markdown("""
         border-radius: 6px;
         color: #065f46;
     }
-    .status-warn {
-        background-color: #fffbebf;
-        border-left: 5px solid #f59e0b;
-        padding: 12px;
-        border-radius: 6px;
-        color: #92400e;
-    }
     .status-alert {
         background-color: #fef2f2;
         border-left: 5px solid #ef4444;
@@ -77,7 +70,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize Authentication State
+# Initialize Session State
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "username" not in st.session_state:
@@ -105,10 +98,10 @@ def render_login_screen():
         
         with st.container():
             st.markdown("#### 🔐 Secure Operations Sign-In")
-            user_input = st.text_input("Engineer ID / Username", value="engineer@petronexa.com")
-            password_input = st.text_input("Access Pin / Password", type="password", value="admin123")
+            user_input = st.text_input("Engineer ID / Username", value="engineer@petronexa.com", key="login_user")
+            password_input = st.text_input("Access Pin / Password", type="password", value="admin123", key="login_pass")
             
-            if st.button("Access Dashboard", type="primary", use_container_width=True):
+            if st.button("Access Dashboard", type="primary", use_container_width=True, key="login_btn"):
                 if user_input and password_input:
                     st.session_state["authenticated"] = True
                     st.session_state["username"] = user_input
@@ -135,14 +128,14 @@ with header_col2:
 
 with header_col3:
     st.markdown(f"👤 **{st.session_state['username']}**")
-    if st.button("Log Out", type="secondary"):
+    if st.button("Log Out", type="secondary", key="logout_btn"):
         st.session_state["authenticated"] = False
         st.session_state["username"] = ""
         st.rerun()
 
 st.markdown("---")
 
-# MAIN WORKSPACE TABS
+# WORKSPACE TABS
 tab_hydraulics, tab_cementing, tab_3d, tab_ai, tab_pdf = st.tabs([
     "💧 Hydraulics Control", 
     "🧱 Cementing Studio", 
@@ -152,7 +145,7 @@ tab_hydraulics, tab_cementing, tab_3d, tab_ai, tab_pdf = st.tabs([
 ])
 
 # ==========================================
-# TAB 1: DRILLING HYDRAULICS (VISUAL CONTROLS)
+# TAB 1: DRILLING HYDRAULICS
 # ==========================================
 with tab_hydraulics:
     st.subheader("Hydraulics & Pressure Envelope")
@@ -161,59 +154,56 @@ with tab_hydraulics:
     
     with col_input:
         st.markdown("##### 🎛️ Well Operations Parameters")
-        surface_mw = st.slider("Surface Mud Density (ppg)", 8.0, 18.0, 12.0, 0.1)
-        flow_rate = st.slider("Circulation Rate (GPM)", 100, 1200, 450, 25)
-        total_depth = st.number_input("Measured Depth - MD (ft)", value=10000.0, step=250.0)
-        tvd = st.number_input("True Vertical Depth - TVD (ft)", value=9500.0, step=250.0)
-        annular_dp = st.slider("Annular Friction Loss (psi)", 50, 1500, 350, 25)
+        surface_mw = st.slider("Surface Mud Density (ppg)", 8.0, 18.0, 12.0, 0.1, key="hyd_mw")
+        flow_rate = st.slider("Circulation Rate (GPM)", 100, 1200, 450, 25, key="hyd_flow")
+        total_depth = st.number_input("Measured Depth - MD (ft)", value=10000.0, step=250.0, key="hyd_md")
+        tvd = st.number_input("True Vertical Depth - TVD (ft)", value=9500.0, step=250.0, key="hyd_tvd")
+        annular_dp = st.slider("Annular Friction Loss (psi)", 50, 1500, 350, 25, key="hyd_dp")
 
-        run_hyd = st.button("Run Hydraulics Calculation", type="primary", use_container_width=True)
+        run_hyd = st.button("Run Hydraulics Calculation", type="primary", use_container_width=True, key="hyd_calc_btn")
 
     with col_viz:
-        if run_hyd or True:  # Instant initial rendering
-            try:
-                engine = DrillingFluidEngine(
-                    surface_mud_weight_ppg=surface_mw,
-                    flow_rate_gpm=flow_rate,
-                    total_depth_ft=total_depth,
-                    true_vertical_depth_ft=tvd
-                )
-                ecd = engine.calculate_bottomhole_ecd(total_annular_dp_psi=annular_dp)
-                hydrostatic = round(0.052 * surface_mw * tvd, 2)
+        try:
+            engine = DrillingFluidEngine(
+                surface_mud_weight_ppg=surface_mw,
+                flow_rate_gpm=flow_rate,
+                total_depth_ft=total_depth,
+                true_vertical_depth_ft=tvd
+            )
+            ecd = engine.calculate_bottomhole_ecd(total_annular_dp_psi=annular_dp)
+            hydrostatic = round(0.052 * surface_mw * tvd, 2)
 
-                # Visual Gauges & KPI Summary Cards
-                kpi1, kpi2 = st.columns(2)
-                with kpi1:
-                    st.metric("Equivalent Circulating Density", f"{ecd} ppg", delta=f"{round(ecd - surface_mw, 2)} ppg delta")
-                with kpi2:
-                    st.metric("Bottomhole Hydrostatic", f"{hydrostatic} psi")
+            kpi1, kpi2 = st.columns(2)
+            with kpi1:
+                st.metric("Equivalent Circulating Density", f"{ecd} ppg", delta=f"{round(ecd - surface_mw, 2)} ppg delta")
+            with kpi2:
+                st.metric("Bottomhole Hydrostatic", f"{hydrostatic} psi")
 
-                # Plotly Visual Gauge for Operational Safety Margin
-                fig_gauge = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=ecd,
-                    title={'text': "ECD Operating Gauge (ppg)"},
-                    gauge={
-                        'axis': {'range': [8.0, 20.0]},
-                        'bar': {'color': "#1E3A8A"},
-                        'steps': [
-                            {'range': [8.0, 10.0], 'color': "#dcfce7"},
-                            {'range': [10.0, 15.0], 'color': "#e0f2fe"},
-                            {'range': [15.0, 18.0], 'color': "#fef3c7"},
-                            {'range': [18.0, 20.0], 'color': "#fee2e2"}
-                        ],
-                        'threshold': {
-                            'line': {'color': "red", 'width': 4},
-                            'thickness': 0.75,
-                            'value': 17.5
-                        }
+            fig_gauge = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=ecd,
+                title={'text': "ECD Operating Gauge (ppg)"},
+                gauge={
+                    'axis': {'range': [8.0, 20.0]},
+                    'bar': {'color': "#1E3A8A"},
+                    'steps': [
+                        {'range': [8.0, 10.0], 'color': "#dcfce7"},
+                        {'range': [10.0, 15.0], 'color': "#e0f2fe"},
+                        {'range': [15.0, 18.0], 'color': "#fef3c7"},
+                        {'range': [18.0, 20.0], 'color': "#fee2e2"}
+                    ],
+                    'threshold': {
+                        'line': {'color': "red", 'width': 4},
+                        'thickness': 0.75,
+                        'value': 17.5
                     }
-                ))
-                fig_gauge.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
-                st.plotly_chart(fig_gauge, use_container_width=True)
+                }
+            ))
+            fig_gauge.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
+            st.plotly_chart(fig_gauge, use_container_width=True)
 
-            except Exception as err:
-                st.error(f"Calculation Error: {str(err)}")
+        except Exception as err:
+            st.error(f"Calculation Error: {str(err)}")
 
 # ==========================================
 # TAB 2: CEMENTING OPERATIONS
@@ -225,19 +215,19 @@ with tab_cementing:
     
     with c_col1:
         st.markdown("##### 📐 Geometry & Depth Specs")
-        casing_od = st.selectbox("Casing Outer Diameter (in)", [9.625, 7.0, 5.5], index=1)
-        casing_id = st.number_input("Casing Inner Diameter (in)", value=6.151)
-        hole_size = st.selectbox("Hole Diameter (in)", [12.25, 8.5, 6.125], index=1)
-        cement_td = st.number_input("Total Depth - TD (ft)", value=12000.0)
-        toc = st.number_input("Top of Cement - TOC (ft)", value=8000.0)
+        casing_od = st.selectbox("Casing Outer Diameter (in)", [9.625, 7.0, 5.5], index=1, key="cem_od")
+        casing_id = st.number_input("Casing Inner Diameter (in)", value=6.151, key="cem_id")
+        hole_size = st.selectbox("Hole Diameter (in)", [12.25, 8.5, 6.125], index=1, key="cem_hole")
+        cement_td = st.number_input("Total Depth - TD (ft)", value=12000.0, key="cem_td")
+        toc = st.number_input("Top of Cement - TOC (ft)", value=8000.0, key="cem_toc")
     
     with c_col2:
         st.markdown("##### 🧪 Slurry & Displacement Density")
-        slurry_mw = st.slider("Cement Slurry Density (ppg)", 12.0, 18.0, 15.8, 0.1)
-        displacement_mw = st.slider("Displacement Mud Weight (ppg)", 8.0, 15.0, 10.5, 0.1)
-        excess = st.slider("Open Hole Excess (%)", 0, 50, 15, 5)
+        slurry_mw = st.slider("Cement Slurry Density (ppg)", 12.0, 18.0, 15.8, 0.1, key="cem_slurry_mw")
+        displacement_mw = st.slider("Displacement Mud Weight (ppg)", 8.0, 15.0, 10.5, 0.1, key="cem_disp_mw")
+        excess = st.slider("Open Hole Excess (%)", 0, 50, 15, 5, key="cem_excess")
 
-    if st.button("Compute Cementing Volumes", type="primary"):
+    if st.button("Compute Cementing Volumes", type="primary", key="cem_calc_btn"):
         try:
             c_engine = CementingEngine(
                 casing_outer_diameter_in=casing_od,
@@ -273,10 +263,10 @@ with tab_3d:
 
     with p_col1:
         st.markdown("##### 🧭 Survey Inputs")
-        kickoff_depth = st.slider("Kickoff Point - KOP (ft)", 500, 5000, 2000, 100)
-        max_inclination = st.slider("Max Inclination (°)", 0, 90, 45, 1)
-        target_azimuth = st.slider("Target Azimuth (°)", 0, 360, 120, 5)
-        total_md = st.number_input("Total MD (ft)", value=10000.0)
+        kickoff_depth = st.slider("Kickoff Point - KOP (ft)", 500, 5000, 2000, 100, key="traj_kop")
+        max_inclination = st.slider("Max Inclination (°)", 0, 90, 45, 1, key="traj_inc")
+        target_azimuth = st.slider("Target Azimuth (°)", 0, 360, 120, 5, key="traj_azi")
+        total_md = st.number_input("Total MD (ft)", value=10000.0, key="traj_md")
 
     with p_col2:
         md_points = np.linspace(0, total_md, 100)
@@ -326,10 +316,10 @@ with tab_ai:
 
     with tele_col:
         st.markdown("##### 📡 Live Rig Telemetry Simulation")
-        spp = st.number_input("Standpipe Pressure - SPP (psi)", value=2800.0, step=100.0)
-        rpm = st.slider("Bit Rotary Speed (RPM)", 0, 250, 120)
-        torque = st.number_input("Top Drive Torque (ft-lbs)", value=14000.0, step=500.0)
-        gas = st.number_input("Background Gas (Units)", value=45.0, step=5.0)
+        spp = st.number_input("Standpipe Pressure - SPP (psi)", value=2800.0, step=100.0, key="ai_spp")
+        rpm = st.slider("Bit Rotary Speed (RPM)", 0, 250, 120, key="ai_rpm")
+        torque = st.number_input("Top Drive Torque (ft-lbs)", value=14000.0, step=500.0, key="ai_torque")
+        gas = st.number_input("Background Gas (Units)", value=45.0, step=5.0, key="ai_gas")
 
     with alert_col:
         st.markdown("##### 🛡️ AI Operational Health Verdict")
@@ -366,14 +356,14 @@ with tab_pdf:
 
     pdf_col1, pdf_col2 = st.columns(2)
     with pdf_col1:
-        well_id = st.text_input("Well Name / ID", value="Well PetroNexa-01 Summary")
-        operator_id = st.text_input("Operator / Service Company", value="PetroNexa Operations")
+        well_id = st.text_input("Well Name / ID", value="Well PetroNexa-01 Summary", key="pdf_well_name")
+        operator_id = st.text_input("Operator / Service Company", value="PetroNexa Operations", key="pdf_operator")
     
     with pdf_col2:
-        pdf_md_val = st.number_input("Total MD (ft)", value=10000.0)
-        pdf_mw_val = st.number_input("Mud Density (ppg)", value=12.2)
+        pdf_md_val = st.number_input("Total MD (ft)", value=10000.0, key="pdf_total_md")
+        pdf_mw_val = st.number_input("Mud Density (ppg)", value=12.2, key="pdf_mud_weight")
 
-    if st.button("Generate & Download PDF Executive Report", type="primary"):
+    if st.button("Generate & Download PDF Executive Report", type="primary", key="pdf_gen_btn"):
         payload = {
             "well_name": well_id,
             "operator": operator_id,
@@ -386,5 +376,6 @@ with tab_pdf:
             label="💾 Save PDF Document",
             data=pdf_data,
             file_name=f"{well_id.replace(' ', '_')}.pdf",
-            mime="application/pdf"
+            mime="application/pdf",
+            key="pdf_download_btn"
         )
