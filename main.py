@@ -1,6 +1,13 @@
 """
 PetroNexa API - Unified Main Entrypoint
 """
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from fastapi import FastAPI, HTTPException, Status
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -26,7 +33,6 @@ class HydraulicsPayloadSchema(BaseModel):
     equivalent_static_density_ppg: Optional[float] = Field(None, gt=0, description="ESD in ppg")
     segments: Optional[List[WellSegmentSchema]] = Field(default=[], description="Wellbore segments")
     
-    # Configurable Safety Margins
     pp_safety_margin_ppg: float = Field(default=0.5, ge=0.0)
     fg_safety_margin_ppg: float = Field(default=0.2, ge=0.0)
 
@@ -47,8 +53,7 @@ async def calculate_hydraulics(payload: HydraulicsPayloadSchema):
             true_vertical_depth_ft=payload.true_vertical_depth_ft
         )
         
-        # Default mock pressure drop for response verification
-        mock_annular_dp = 250.0  # psi
+        mock_annular_dp = 250.0
         ecd = engine.calculate_bottomhole_ecd(total_annular_dp_psi=mock_annular_dp)
 
         return {
