@@ -1,203 +1,141 @@
 """
-PetroNexa Main API Application Core.
+PetroNexa Streamlit Web Application Interface
 """
-import logging
-from contextlib import asynccontextmanager
-from typing import List, Optional
+import streamlit as st
+from source.physics import DrillingFluidEngine
+from source.cementing_engine import CementingEngine
+from source.pdf_generator import ReportGenerator
 
-from fastapi import FastAPI, HTTPException, status, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-
-from config import settings
-from physics import DrillingHydraulicsEngine, WellSegment, DiagnosticEngine, RheologyModel
-from cementing_engine import PrimaryCementingInput, CementingEngine
-from gradients import evaluate_pressure_window
-from pdf_generator import generate_pdf_payload
-from database import init_db, get_db, UserModel, Base
-from auth import get_current_user
-from router import router as auth_router
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("petronexa.api")
-ai_diagnostics: Optional[DiagnosticEngine] = None
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Initializing PetroNexa backend services...")
-    await init_db()
-    global ai_diagnostics
-    ai_diagnostics = DiagnosticEngine(ecd_upper_threshold_delta=1.5, max_spp_limit=3500.0)
-    yield
-    logger.info("PetroNexa backend shut down.")
-
-
-app = FastAPI(
-    title=settings.app_name,
-    description="Production-grade API for wellbore hydraulics, cementing, and geomechanics.",
-    version=settings.app_version,
-    lifespan=lifespan,
+# Page Configuration & Styling
+st.set_page_config(
+    page_title="PetroNexa | Petroleum Engineering Suite",
+    page_icon="⚓",
+    layout="wide"
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.origins_list,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
-)
+st.title("⚓ PetroNexa Engineering Operations")
+st.markdown("---")
 
-app.include_router(auth_router)
+# Application Navigation Tabs
+tab_hydraulics, tab_cementing = st.tabs(["💧 Drilling Hydraulics", "🧱 Cementing Operations"])
 
+# ==========================================
+# TAB 1: DRILLING HYDRAULICS
+# ==========================================
+with tab_hydraulics:
+    st.subheader("Hydraulics & Rheology Configuration")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        surface_mw = st.number_input("Surface Mud Weight (ppg)", min_value=0.1, value=12.0, step=0.1)
+        flow_rate = st.number_input("Flow Rate (GPM)", min_value=1.0, value=450.0, step=10.0)
+    with col2:
+        total_depth = st.number_input("Measured Depth - MD (ft)", min_value=1.0, value=10000.0, step=100.0)
+        tvd = st.number_input("True Vertical Depth - TVD (ft)", min_value=1.0, value=9500.0, step=100.0)
 
-class WellSegmentSchema(BaseModel):
-    name: str = Field(default="Drill Pipe", max_length=100)
-    top_md: float = Field(default=0.0, ge=0.0)
-    bottom_md: float = Field(default=7000.0, ge=0.0)
-    pipe_od: float = Field(default=5.0, gt=0.0)
-    pipe_id: float = Field(default=4.276, gt=0.0)
-    hole_id: float = Field(default=8.5, gt=0.0)
+    st.markdown("#### Annular Friction Losses")
+    annular_dp = st.number_input("Total Annular Pressure Drop (psi)", min_value=0.0, value=350.0, step=25.0)
 
+    if st.button("Calculate Hydraulics", type="primary"):
+        try:
+            # Instantiate physics engine (raises ValueError on invalid parameters)
+            engine = DrillingFluidEngine(
+                surface_mud_weight_ppg=surface_mw,
+                flow_rate_gpm=flow_rate,
+                total_depth_ft=total_depth,
+                true_vertical_depth_ft=tvd
+            )
+            
+            ecd = engine.calculate_bottomhole_ecd(total_annular_dp_psi=annular_dp)
+            
+            st.success("Hydraulics calculations completed successfully.")
+            
+            res_col1, res_col2 = st.columns(2)
+            res_col1.metric("Equivalent Circulating Density (ECD)", f"{ecd} ppg")
+            res_col2.metric("Hydrostatic Pressure Baseline", f"{round(0.052 * surface_mw * tvd, 2)} psi")
 
-class HydraulicsPayloadSchema(BaseModel):
-    flow_rate_gpm: float = Field(default=450.0, gt=0.0)
-    total_depth_ft: float = Field(default=8000.0, gt=0.0)
-    true_vertical_depth_ft: Optional[float] = Field(default=None, gt=0.0)
-    surface_mud_weight_ppg: float = Field(default=10.0, gt=0.0)
-    equivalent_static_density_ppg: Optional[float] = Field(default=None, gt=0.0)
-    plastic_viscosity_cp: float = Field(default=20.0, ge=0.0)
-    yield_point_lb_100ft2: float = Field(default=15.0, ge=0.0)
-    rheology_model: RheologyModel = Field(default=RheologyModel.BINGHAM_PLASTIC)
-    segments: Optional[List[WellSegmentSchema]] = None
-
-
-class PressureWindowPayloadSchema(BaseModel):
-    depth_intervals: List[float]
-    pore_pressures: List[float]
-    frac_gradients: List[float]
-    pp_safety_margin_ppg: float = Field(default=0.5, ge=0.0)
-    fg_safety_margin_ppg: float = Field(default=0.2, ge=0.0)
-
-
-@app.get("/health", tags=["System Status"])
-async def health():
-    return {"status": "ok", "service": "petronexa-api", "version": settings.app_version}
-
-
-@app.post("/api/v1/hydraulics/calculate", tags=["Hydraulics Engine"])
-async def calculate_hydraulics(
-    payload: HydraulicsPayloadSchema,
-    current_user: UserModel = Depends(get_current_user),
-):
-    try:
-        tvd = payload.true_vertical_depth_ft if payload.true_vertical_depth_ft else payload.total_depth_ft
-        esd = payload.equivalent_static_density_ppg if payload.equivalent_static_density_ppg else payload.surface_mud_weight_ppg
-
-        engine = DrillingHydraulicsEngine(
-            surface_mud_weight_ppg=payload.surface_mud_weight_ppg,
-            flow_rate_gpm=payload.flow_rate_gpm,
-            total_depth_ft=payload.total_depth_ft,
-            true_vertical_depth_ft=tvd,
-            plastic_viscosity_cp=payload.plastic_viscosity_cp,
-            yield_point_lb_100ft2=payload.yield_point_lb_100ft2,
-            rheology_model=payload.rheology_model,
-        )
-
-        if payload.segments:
-            for seg in payload.segments:
-                length = max(0.0, seg.bottom_md - seg.top_md)
-                engine.add_segment(
-                    WellSegment(
-                        name=seg.name,
-                        length_ft=length,
-                        pipe_od_in=seg.pipe_od,
-                        pipe_id_in=seg.pipe_id,
-                        hole_id_in=seg.hole_id,
-                        mud_weight_ppg=payload.surface_mud_weight_ppg,
-                        viscosity_cp=payload.plastic_viscosity_cp,
-                        yield_point_lb_100ft2=payload.yield_point_lb_100ft2,
-                    )
-                )
-        else:
-            engine.add_segment(
-                WellSegment(
-                    name="Default Drill String",
-                    length_ft=payload.total_depth_ft,
-                    pipe_od_in=5.0,
-                    pipe_id_in=4.276,
-                    hole_id_in=8.5,
-                    mud_weight_ppg=payload.surface_mud_weight_ppg,
-                    viscosity_cp=payload.plastic_viscosity_cp,
-                    yield_point_lb_100ft2=payload.yield_point_lb_100ft2,
-                )
+            # PDF Generation Payload
+            report_payload = {
+                "surface_mud_weight_ppg": surface_mw,
+                "flow_rate_gpm": flow_rate,
+                "total_depth_ft": total_depth,
+                "true_vertical_depth_ft": tvd,
+                "calculated_ecd_ppg": ecd
+            }
+            
+            pdf_bytes = ReportGenerator.generate_hydraulics_report(report_payload)
+            st.download_button(
+                label="📄 Download Hydraulics Report (PDF)",
+                data=pdf_bytes,
+                file_name="PetroNexa_Hydraulics_Report.pdf",
+                mime="application/pdf"
             )
 
-        results = engine.solve()
-        diagnostics = ai_diagnostics.analyze_telemetry(
-            physics_metrics=results, equivalent_static_density_esd=esd
-        ) if ai_diagnostics else {}
+        except ValueError as err:
+            st.error(f"⚠️ Engineering Validation Error: {str(err)}")
 
-        return {"physics_results": results, "diagnostics": diagnostics}
-    except Exception as exc:
-        logger.exception("Hydraulics calculation failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Calculation Engine Failure: {exc}",
-        )
+# ==========================================
+# TAB 2: CEMENTING OPERATIONS
+# ==========================================
+with tab_cementing:
+    st.subheader("Cementing Design & Volume Calculation")
 
+    col_a, col_b = st.columns(2)
+    with col_a:
+        casing_od = st.number_input("Casing Outer Diameter (in)", min_value=1.0, value=7.0, step=0.125)
+        casing_id = st.number_input("Casing Inner Diameter (in)", min_value=0.5, value=6.151, step=0.125)
+        hole_size = st.number_input("Hole Diameter (in)", min_value=1.0, value=8.5, step=0.125)
+    with col_b:
+        cement_td = st.number_input("Total Depth - TD (ft)", min_value=1.0, value=12000.0, step=500.0, key="cem_td")
+        toc = st.number_input("Top of Cement - TOC (ft)", min_value=0.0, value=8000.0, step=500.0)
+        excess = st.number_input("Excess Volume Margin (%)", min_value=0.0, value=15.0, step=5.0)
 
-@app.post("/api/v1/hydraulics/export-pdf", tags=["Reports"])
-async def export_pdf_report(
-    payload: HydraulicsPayloadSchema,
-    current_user: UserModel = Depends(get_current_user),
-):
-    calc_response = await calculate_hydraulics(payload, current_user)
-    pdf_buffer = generate_pdf_payload(
-        project_metadata={
-            "name": payload.segments[0].name if payload.segments else "Default Well",
-            "field_name": "Active Field",
-            "rig_name": "Rig 1",
-            "company": current_user.company_name or "PetroNexa",
-        },
-        physics_results=calc_response["physics_results"],
-        diagnostic_results=calc_response["diagnostics"],
-        engineer_name=current_user.username,
-    )
-    return StreamingResponse(
-        pdf_buffer,
-        media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=PetroNexa_Technical_Report.pdf"},
-    )
+    st.markdown("#### Slurry & Fluid Densities")
+    slurry_mw = st.number_input("Cement Slurry Density (ppg)", min_value=1.0, value=15.8, step=0.2)
+    displacement_mw = st.number_input("Displacement Mud Weight (ppg)", min_value=1.0, value=10.5, step=0.2)
 
+    if st.button("Calculate Cementing Design", type="primary"):
+        try:
+            c_engine = CementingEngine(
+                casing_outer_diameter_in=casing_od,
+                casing_inner_diameter_in=casing_id,
+                hole_diameter_in=hole_size,
+                total_depth_ft=cement_td,
+                top_of_cement_ft=toc
+            )
 
-@app.post("/api/v1/cementing/design", tags=["Cementing Engine"])
-async def design_cement_job(
-    params: PrimaryCementingInput,
-    current_user: UserModel = Depends(get_current_user),
-):
-    try:
-        return CementingEngine().design_primary_job(params)
-    except Exception as exc:
-        logger.exception("Cementing calculation failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Cementing Engine Failure: {exc}",
-        )
+            slurry_vol = c_engine.calculate_slurry_volume_bbl(excess_percentage=excess)
+            disp_vol = c_engine.calculate_displacement_volume_bbl(shoe_track_length_ft=80.0)
+            bhp_results = c_engine.calculate_hydrostatic_head_psi(
+                slurry_density_ppg=slurry_mw,
+                mud_density_ppg=displacement_mw
+            )
 
+            st.success("Cementing design completed successfully.")
+            
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Required Slurry Volume", f"{slurry_vol} bbl")
+            m2.metric("Displacement Volume", f"{disp_vol} bbl")
+            m3.metric("Post-Job BHP", f"{bhp_results['total_bottomhole_pressure_psi']} psi")
 
-@app.post("/api/v1/geomechanics/window", tags=["Geomechanics Engine"])
-async def calculate_mud_window(
-    payload: PressureWindowPayloadSchema,
-    current_user: UserModel = Depends(get_current_user),
-):
-    return evaluate_pressure_window(
-        depth_intervals=payload.depth_intervals,
-        pore_pressures=payload.pore_pressures,
-        frac_gradients=payload.frac_gradients,
-        pp_safety_margin_ppg=payload.pp_safety_margin_ppg,
-        fg_safety_margin_ppg=payload.fg_safety_margin_ppg,
-    )
+            # Report Generation
+            cem_report_payload = {
+                "casing_od_in": casing_od,
+                "hole_diameter_in": hole_size,
+                "total_depth_ft": cement_td,
+                "top_of_cement_ft": toc,
+                "slurry_volume_bbl": slurry_vol,
+                "displacement_volume_bbl": disp_vol,
+                "bottomhole_hydrostatic_psi": bhp_results['total_bottomhole_pressure_psi']
+            }
+
+            cem_pdf_bytes = ReportGenerator.generate_hydraulics_report(cem_report_payload)
+            st.download_button(
+                label="📄 Download Cementing Job PDF",
+                data=cem_pdf_bytes,
+                file_name="PetroNexa_Cementing_Report.pdf",
+                mime="application/pdf"
+            )
+
+        except ValueError as err:
+            st.error(f"⚠️ Engineering Validation Error: {str(err)}")
