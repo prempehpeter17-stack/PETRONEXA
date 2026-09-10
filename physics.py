@@ -81,7 +81,6 @@ class DrillingHydraulicsEngine:
 
         sorted_segments = sorted(self.segments, key=lambda s: s.top_depth_ft)
 
-        # Consistent float-tolerance check at surface
         if not math.isclose(sorted_segments[0].top_depth_ft, 0.0, abs_tol=1e-2):
             raise ValueError(f"First segment must start at surface (0 ft), found {sorted_segments[0].top_depth_ft} ft.")
 
@@ -101,48 +100,34 @@ class DrillingHydraulicsEngine:
             )
 
     def _calc_annular_velocity(self, hole_id: float, pipe_od: float) -> float:
-        """Calculate annular velocity in feet per minute (ft/min)."""
         annular_area = (hole_id**2 - pipe_od**2) / 1029.4
         return self.q / annular_area if annular_area > 0 else 0.0
 
     def _calc_pipe_velocity(self, pipe_id: float) -> float:
-        """Calculate internal pipe velocity in feet per minute (ft/min)."""
         pipe_area = (pipe_id**2) / 1029.4
         return self.q / pipe_area if pipe_area > 0 else 0.0
 
     def _calc_annular_friction_loss(self, seg: WellSegment) -> float:
-        """
-        Calculates annular pressure loss (psi) using standard Bingham Plastic hydraulics model,
-        incorporating effective viscosity, Reynolds number, and flow regime determination.
-        """
         v_a = self._calc_annular_velocity(seg.hole_id_in, seg.pipe_od_in)
         if v_a <= 0:
             return 0.0
 
         d_h = seg.hole_id_in - seg.pipe_od_in
-
-        # Effective viscosity (cp) for Bingham Plastic fluid in annulus
         mu_e = seg.viscosity_cp + ((5.0 * seg.yield_point_lb_100ft2 * d_h) / v_a)
-
-        # Effective Reynolds number in annular geometry
         reynolds = (928.0 * seg.mud_weight_ppg * v_a * d_h) / max(0.1, mu_e)
 
-        # Pressure gradient determination (psi/ft)
         if reynolds < 2100.0:
-            # Laminar flow regime
             dp_ft = (
                 (seg.viscosity_cp * v_a / (1000.0 * (d_h**2))) 
                 + (seg.yield_point_lb_100ft2 / (200.0 * d_h))
             )
         else:
-            # Turbulent flow regime (Fanning friction factor approximation)
             f_factor = 0.0791 / (reynolds**0.25)
             dp_ft = (f_factor * seg.mud_weight_ppg * (v_a**2)) / (25.8 * d_h * 10000.0)
 
         return max(0.0, dp_ft * seg.length_ft)
 
     def solve(self, validate_continuity: bool = True) -> Dict[str, Any]:
-        """Calculates total hydraulic losses, hydrostatic pressure, and ECD. Defaults to strict continuity checks."""
         if not self.segments:
             raise ValueError("No well segments added to hydraulics engine.")
 
@@ -168,13 +153,8 @@ class DrillingHydraulicsEngine:
                 "annular_dp_psi": round(ann_dp, 2)
             })
 
-        # Hydrostatic Pressure in psi
         hydrostatic_psi = 0.052 * self.mw * self.td
-
-        # Total Bottom Hole Pressure in psi
         total_bhp_psi = hydrostatic_psi + total_annular_dp
-
-        # Equivalent Circulating Density (ECD) in ppg
         ecd_ppg = self.mw + (total_annular_dp / (0.052 * self.td))
 
         return {
@@ -204,10 +184,6 @@ class DiagnosticEngine:
         baseline_esd_ppg: Optional[float] = None,
         historical_esd: Optional[float] = None
     ) -> Dict[str, Any]:
-        """
-        Analyzes output metrics against static baselines and explicit safety thresholds.
-        Requires explicit `pore_limit` and `frac_limit` to prevent ungrounded engineering fallbacks.
-        """
         if pore_limit is None or frac_limit is None:
             raise ValueError(
                 "Pore-pressure and fracture-gradient limits must be explicitly provided "
@@ -217,7 +193,6 @@ class DiagnosticEngine:
         ecd = physics_metrics.get("ecd_ppg", 0.0)
         spp = physics_metrics.get("standpipe_pressure_psi")
 
-        # Resolve static baseline parameter
         base_density = baseline_esd_ppg if baseline_esd_ppg is not None else historical_esd
         if base_density is None:
             base_density = physics_metrics.get("surface_mud_weight_ppg", 0.0)
@@ -228,7 +203,6 @@ class DiagnosticEngine:
         matched_hazard = "None"
         recommendations = []
 
-        # Check Pressure Window Bounds
         if ecd < pore_limit:
             severity = "RED"
             matched_hazard = "Underbalanced / Kick Risk"
@@ -250,7 +224,6 @@ class DiagnosticEngine:
             flags.append(f"Moderate friction surge (+{round(delta_ecd, 2)} ppg). Monitor hole cleaning.")
             recommendations.append("Perform high-viscosity pill sweep and track ECD trends.")
 
-        # Evaluate SPP strictly when available
         if spp is not None and spp > self.max_spp:
             severity = "RED" if severity != "RED" else severity
             matched_hazard = "Standpipe Pressure Excursion"
@@ -266,7 +239,6 @@ class DiagnosticEngine:
         )
 
         return {
-            # Base engine metrics
             "status": severity,
             "severity": severity,
             "delta_ecd_ppg": round(delta_ecd, 2),
@@ -275,8 +247,6 @@ class DiagnosticEngine:
             "standpipe_pressure_psi": spp,
             "flags": flags,
             "recommendation": recommendations[0],
-
-            # PDF Generator Contract Fields
             "pore_limit": round(pore_limit, 2),
             "frac_limit": round(frac_limit, 2),
             "matched_hazard": matched_hazard,
