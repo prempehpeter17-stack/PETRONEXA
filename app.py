@@ -213,8 +213,7 @@ def validate_hydraulics_inputs(
 # TRANSPARENT SAFETY EVALUATOR
 # ============================
 def evaluate_drilling_safety(results: dict, target_depth: float, gradient_df: pd.DataFrame):
-    """Evaluates ECD relative to pore and fracture pressures dynamically with source tracking."""
-    ecd = results.get("ecd_ppg", 0.0)
+    """Evaluates ECD relative to pore and fracture pressures dynamically using DiagnosticEngine."""
     gdf = gradient_df.copy().apply(pd.to_numeric, errors="coerce").dropna()
     pore_limit = 9.0
     frac_limit = 15.0
@@ -236,31 +235,14 @@ def evaluate_drilling_safety(results: dict, target_depth: float, gradient_df: pd
             gradient_error = str(exc)
 
     diag_engine = DiagnosticEngine()
-    diag_res = diag_engine.analyze_telemetry(results, baseline_esd_ppg=results.get("surface_mud_weight_ppg"))
-
-    if ecd > frac_limit:
-        severity = "RED"
-        matched_hazard = "Formation Fracturing Risk"
-        msg = f"ECD ({ecd:.2f} ppg) exceeds formation fracture gradient ({frac_limit:.2f} ppg) at target depth."
-        rec = "Review pump displacement rate, rheology parameters, and mud-weight program to restore hydraulic operating window."
-    elif ecd < pore_limit:
-        severity = "YELLOW"
-        matched_hazard = "Underbalanced Influx Risk"
-        msg = f"ECD ({ecd:.2f} ppg) is below estimated formation pore pressure ({pore_limit:.2f} ppg)."
-        rec = "Adjust mud density or circulation parameters to secure required hydrostatic overbalance."
-    else:
-        severity = "GREEN"
-        matched_hazard = "None"
-        msg = f"ECD ({ecd:.2f} ppg) is within configured Pore ({pore_limit:.2f} ppg) and Fracture ({frac_limit:.2f} ppg) design boundaries."
-        rec = "Hydraulics window is within configured design limits. Continue operations under standard well-control protocol."
+    diag_res = diag_engine.analyze_telemetry(
+        physics_metrics=results,
+        pore_limit=pore_limit,
+        frac_limit=frac_limit,
+        baseline_esd_ppg=results.get("surface_mud_weight_ppg")
+    )
 
     diag_res.update({
-        "severity": severity,
-        "matched_hazard": matched_hazard,
-        "message": msg,
-        "recommendation": rec,
-        "pore_limit": pore_limit,
-        "frac_limit": frac_limit,
         "gradient_source": gradient_source,
         "gradient_error": gradient_error,
     })
@@ -508,13 +490,18 @@ with tab1:
                         plastic_viscosity_cp=pv,
                         yield_point_lb_100ft2=yp,
                     )
-                    
-                    # Instantiate segments matching physics.py dataclass schema
+
+                    # Build contiguous top_depth -> bottom_depth intervals
+                    current_top_ft = 0.0
                     for _, row in edited_segments.iterrows():
+                        seg_length = float(row["Length (ft)"])
+                        bottom_ft = current_top_ft + seg_length
+                        
                         engine.add_segment(
                             WellSegment(
                                 name=str(row["Segment Name"]),
-                                length_ft=float(row["Length (ft)"]),
+                                top_depth_ft=current_top_ft,
+                                bottom_depth_ft=bottom_ft,
                                 pipe_od_in=float(row["Pipe OD (in)"]),
                                 pipe_id_in=float(row["Pipe ID (in)"]),
                                 hole_id_in=float(row["Hole ID (in)"]),
@@ -523,6 +510,7 @@ with tab1:
                                 yield_point_lb_100ft2=yp,
                             )
                         )
+                        current_top_ft = bottom_ft
 
                     results = engine.solve()
                     st.session_state.latest_results = results
@@ -652,15 +640,20 @@ with tab3:
         if diag.get("gradient_error"):
             st.warning(f"⚠️ Gradient profile evaluation unfulfilled ({diag['gradient_error']}). Fallback safety limits applied.")
 
-        if diag.get("status") == "CRITICAL" or diag.get("severity") == "RED":
-            st.error(f"**CRITICAL EXCURSION**: {diag['message']}")
-            st.write(f"• **Recommended Action**: {diag['recommendation']}")
-        elif diag.get("status") == "WARNING" or diag.get("status") == "UNDERBALANCED" or diag.get("severity") == "YELLOW":
-            st.warning(f"**RISK WARNING**: {diag['message']}")
-            st.write(f"• **Recommended Action**: {diag['recommendation']}")
+        severity = diag.get("severity", "GREEN")
+        matched_hazard = diag.get("matched_hazard", "None")
+        detailed_diagnosis = diag.get("detailed_diagnosis", "")
+
+        if severity == "RED":
+            st.error(f"**HAZARD ALERT ({matched_hazard})**: {detailed_diagnosis}")
+        elif severity == "YELLOW":
+            st.warning(f"**OPERATIONAL WARNING ({matched_hazard})**: {detailed_diagnosis}")
         else:
-            st.success(f"**WITHIN CONFIGURED HYDRAULIC WINDOW**: {diag['message']}")
-            st.write(f"• **Operational Status**: {diag['recommendation']}")
+            st.success(f"**NOMINAL HYDRAULICS PROFILE**: {detailed_diagnosis}")
+
+        st.markdown("**Actionable Recommendations:**")
+        for rec in diag.get("actionable_recommendations", []):
+            st.write(f"• {rec}")
 
         if diag.get("flags"):
             for flag in diag["flags"]:
@@ -760,17 +753,10 @@ with tab5:
                     "company": user_data.get("company", ""),
                 }
 
-                diag = st.session_state.latest_diagnostics
-                diag_meta = {
-                    "severity": diag.get("severity", "NORMAL"),
-                    "matched_hazard": diag.get("matched_hazard", "None"),
-                    "detailed_diagnosis": diag.get("message", "Calculations completed successfully."),
-                }
-
                 pdf_buffer = generate_pdf_payload(
                     project_meta,
                     st.session_state.latest_results,
-                    diag_meta,
+                    st.session_state.latest_diagnostics,
                     engineer_name=user_data.get("username", "Engineer"),
                     cementing_results=st.session_state.get("cementing_results"),
                 )
