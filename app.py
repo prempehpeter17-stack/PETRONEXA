@@ -1,6 +1,14 @@
 """
 PetroNexa Streamlit Web Application Interface
 """
+import sys
+from pathlib import Path
+
+# Explicitly resolve root path to prevent ModuleNotFoundError on Streamlit Cloud
+ROOT_DIR = Path(__file__).resolve().parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import streamlit as st
 from source.physics import DrillingFluidEngine
 from source.cementing_engine import CementingEngine
@@ -38,7 +46,6 @@ with tab_hydraulics:
 
     if st.button("Calculate Hydraulics", type="primary"):
         try:
-            # Instantiate physics engine (raises ValueError on invalid parameters)
             engine = DrillingFluidEngine(
                 surface_mud_weight_ppg=surface_mw,
                 flow_rate_gpm=flow_rate,
@@ -54,7 +61,6 @@ with tab_hydraulics:
             res_col1.metric("Equivalent Circulating Density (ECD)", f"{ecd} ppg")
             res_col2.metric("Hydrostatic Pressure Baseline", f"{round(0.052 * surface_mw * tvd, 2)} psi")
 
-            # PDF Generation Payload
             report_payload = {
                 "surface_mud_weight_ppg": surface_mw,
                 "flow_rate_gpm": flow_rate,
@@ -118,7 +124,6 @@ with tab_cementing:
             m2.metric("Displacement Volume", f"{disp_vol} bbl")
             m3.metric("Post-Job BHP", f"{bhp_results['total_bottomhole_pressure_psi']} psi")
 
-            # Report Generation
             cem_report_payload = {
                 "casing_od_in": casing_od,
                 "hole_diameter_in": hole_size,
