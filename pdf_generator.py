@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
@@ -15,14 +15,13 @@ from reportlab.lib.utils import ImageReader
 
 
 # ============================
-# CUSTOM CANVAS (header + watermark + footer)
+# CUSTOM CANVAS (Header, Watermark, Footer)
 # ============================
 class NumberedCanvas(canvas.Canvas):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._saved_page_states = []
 
-        # Locate logo.png safely across working directories
         self.logo_image = None
         script_dir = os.path.dirname(os.path.abspath(__file__))
         cwd = os.getcwd()
@@ -54,7 +53,6 @@ class NumberedCanvas(canvas.Canvas):
         super().save()
 
     def _draw_watermark(self):
-        """Centered semi-transparent logo watermark."""
         if self.logo_image is None:
             self.saveState()
             self.setFont("Helvetica-Bold", 42)
@@ -83,7 +81,6 @@ class NumberedCanvas(canvas.Canvas):
         self.restoreState()
 
     def _draw_header_logo(self):
-        """Small logo top-right on every page."""
         if self.logo_image is None:
             return
         page_width, page_height = letter
@@ -104,16 +101,14 @@ class NumberedCanvas(canvas.Canvas):
         self.restoreState()
 
     def _draw_page_decorations(self, page_count: int):
-        """Watermark + header + footer on every page."""
         self._draw_watermark()
         self.saveState()
-
         self._draw_header_logo()
 
         if self._pageNumber > 1:
             self.setFont("Helvetica-Bold", 8)
             self.setFillColor(colors.HexColor("#64748B"))
-            self.drawString(54, 752, "PetroNexa  —  TECHNICAL COMPLIANCE REPORT")
+            self.drawString(54, 752, "PetroNexa  —  ENGINEERING TECHNICAL REPORT")
             self.setStrokeColor(colors.HexColor("#E2E8F0"))
             self.setLineWidth(0.6)
             self.line(54, 744, 558, 744)
@@ -132,35 +127,56 @@ class NumberedCanvas(canvas.Canvas):
 
 
 # ============================
-# PRESSURE WINDOW CHART
+# DATA-DRIVEN PRESSURE WINDOW CHART
 # ============================
-def create_pressure_window_chart() -> Drawing:
-    d = Drawing(450, 130)
-    d.add(Rect(0, 0, 450, 130, fillColor=colors.HexColor("#F8FAFC"),
-               strokeColor=colors.HexColor("#E2E8F0"), strokeWidth=0.8))
+def create_pressure_window_chart(pore_ppg: float, ecd_ppg: float, frac_ppg: float) -> Drawing:
+    """
+    Generates a dynamic visual representation of the hydraulic window.
+    Calculates scale boundaries dynamically from inputs to prevent clipping.
+    """
+    d = Drawing(450, 110)
+    
+    # Background Box
+    d.add(Rect(0, 0, 450, 110, fillColor=colors.HexColor("#F8FAFC"), strokeColor=colors.HexColor("#CBD5E1"), strokeWidth=0.8))
 
-    for x in range(50, 450, 50):
-        d.add(Line(x, 8, x, 122, strokeColor=colors.HexColor("#E2E8F0"), strokeWidth=0.4))
+    # Calculate dynamic scale bounds with 1.0 ppg padding
+    min_val = max(0.0, min(pore_ppg, ecd_ppg, frac_ppg) - 1.0)
+    max_val = max(pore_ppg, ecd_ppg, frac_ppg) + 1.0
+    
+    width_px = 370.0
+    start_x = 40.0
 
-    d.add(Rect(50, 8, 95, 114, fillColor=colors.HexColor("#FEE2E2"), strokeColor=colors.transparent))
-    d.add(Rect(305, 8, 95, 114, fillColor=colors.HexColor("#FEE2E2"), strokeColor=colors.transparent))
-    d.add(Rect(145, 8, 160, 114, fillColor=colors.HexColor("#DCFCE7"), strokeColor=colors.transparent))
+    def val_to_x(v: float) -> float:
+        if max_val == min_val:
+            return start_x + (width_px / 2.0)
+        return start_x + ((v - min_val) / (max_val - min_val)) * width_px
 
-    d.add(Line(185, 122, 210, 85, strokeColor=colors.HexColor("#2563EB"), strokeWidth=2.2))
-    d.add(Line(210, 85, 200, 48, strokeColor=colors.HexColor("#2563EB"), strokeWidth=2.2))
-    d.add(Line(200, 48, 230, 8, strokeColor=colors.HexColor("#2563EB"), strokeWidth=2.2))
+    pore_x = val_to_x(pore_ppg)
+    frac_x = val_to_x(frac_ppg)
+    ecd_x = val_to_x(ecd_ppg)
 
-    d.add(String(58, 108, "Pore Pressure", fontName="Helvetica-Bold", fontSize=7.5,
-                 fillColor=colors.HexColor("#991B1B")))
-    d.add(String(165, 108, "ECD Operating Window", fontName="Helvetica-Bold", fontSize=7.5,
-                 fillColor=colors.HexColor("#166534")))
-    d.add(String(315, 108, "Fracture Limit", fontName="Helvetica-Bold", fontSize=7.5,
-                 fillColor=colors.HexColor("#991B1B")))
+    # Zones
+    d.add(Rect(start_x, 25, max(0, pore_x - start_x), 60, fillColor=colors.HexColor("#FEE2E2"), strokeColor=colors.transparent)) # Underbalanced
+    d.add(Rect(pore_x, 25, max(0, frac_x - pore_x), 60, fillColor=colors.HexColor("#DCFCE7"), strokeColor=colors.transparent)) # Safe Window
+    d.add(Rect(frac_x, 25, max(0, (start_x + width_px) - frac_x), 60, fillColor=colors.HexColor("#FEE2E2"), strokeColor=colors.transparent)) # Losses/Frac
+
+    # Marker Lines
+    d.add(Line(pore_x, 20, pore_x, 90, strokeColor=colors.HexColor("#DC2626"), strokeWidth=1.5))
+    d.add(Line(frac_x, 20, frac_x, 90, strokeColor=colors.HexColor("#DC2626"), strokeWidth=1.5))
+    
+    # ECD Marker Line & Indicator
+    d.add(Line(ecd_x, 15, ecd_x, 95, strokeColor=colors.HexColor("#2563EB"), strokeWidth=2.5))
+
+    # Labels
+    d.add(String(max(start_x, pore_x - 20), 93, f"Pore: {pore_ppg:.2f}", fontName="Helvetica-Bold", fontSize=7.5, fillColor=colors.HexColor("#991B1B")))
+    d.add(String(min(start_x + width_px - 35, frac_x - 10), 93, f"Frac: {frac_ppg:.2f}", fontName="Helvetica-Bold", fontSize=7.5, fillColor=colors.HexColor("#991B1B")))
+    d.add(String(max(start_x, min(start_x + width_px - 35, ecd_x - 15)), 5, f"ECD: {ecd_ppg:.2f}", fontName="Helvetica-Bold", fontSize=8, fillColor=colors.HexColor("#1E3A8A")))
+
     return d
 
 
 # ============================
-# MAIN GENERATOR
+# MAIN PDF GENERATOR
 # ============================
 def generate_pdf_payload(
     project_metadata: Dict[str, Any],
@@ -169,6 +185,17 @@ def generate_pdf_payload(
     engineer_name: str = "Peter Prempeh",
     cementing_results: Optional[Dict[str, Any]] = None
 ) -> io.BytesIO:
+
+    # 1. Strict Boundary Validation
+    pore_limit = diagnostic_results.get("pore_limit")
+    frac_limit = diagnostic_results.get("frac_limit")
+
+    if pore_limit is None or frac_limit is None:
+        raise ValueError(
+            "Diagnostic results must include 'pore_limit' and 'frac_limit' "
+            "before generating the engineering PDF."
+        )
+
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -205,17 +232,22 @@ def generate_pdf_payload(
         "HeaderWhite", fontName="Helvetica-Bold", fontSize=8.5, leading=12,
         textColor=colors.white
     )
+    disclaimer_style = ParagraphStyle(
+        "Disclaimer", fontName="Helvetica-Oblique", fontSize=7.5, leading=10,
+        textColor=colors.HexColor("#64748B"), spaceBefore=4
+    )
 
     elements = []
 
     # ---- Title ----
     elements.append(Paragraph("PetroNexa", title_style))
-    elements.append(Paragraph("Engineering Technical Compliance Field Report", subtitle_style))
+    elements.append(Paragraph("PetroNexa Engineering Technical Report", subtitle_style))
 
     # ---- Metadata ----
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d  %H:%M UTC")
-    report_id = f"PMC-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}"
-    td_val = physics_results.get("total_depth_ft", physics_results.get("well_depth_ft", 0.0))
+    now_utc = datetime.now(timezone.utc)
+    now_str = now_utc.strftime("%Y-%m-%d %H:%M UTC")
+    report_id = f"PNX-DRL-{now_utc.strftime('%Y%m%d-%H%M')}"
+    td_val = physics_results.get("total_depth_ft", 0.0)
     flow_val = physics_results.get("flow_rate_gpm", 0.0)
 
     meta_data = [
@@ -261,11 +293,11 @@ def generate_pdf_payload(
     if severity == "GREEN":
         status_text = "STABLE OPERATIONAL GRADIENT"
         status_color = "#166534"
-    elif severity == "YELLOW":
-        status_text = "WARNING – ELEVATED"
+    elif severity in ["YELLOW", "WARNING"]:
+        status_text = "WARNING – ELEVATED RISK"
         status_color = "#B45309"
     else:
-        status_text = "CRITICAL BREACH"
+        status_text = "CRITICAL HYDRAULIC BREACH"
         status_color = "#991B1B"
 
     diag_text = diagnostic_results.get(
@@ -274,14 +306,14 @@ def generate_pdf_payload(
     )
 
     summary_box = [
-        [Paragraph("<b>Well Health Status</b>", body_style),
+        [Paragraph("<b>Hydraulic Operating Status</b>", body_style),
          Paragraph(f'<font color="{status_color}"><b>{status_text}</b></font>', body_style)],
         [Paragraph("<b>Matched Hazard</b>", body_style),
          Paragraph(diagnostic_results.get("matched_hazard", "None"), body_style)],
-        [Paragraph("<b>AI Diagnosis</b>", body_style),
+        [Paragraph("<b>Automated Engineering Diagnosis</b>", body_style),
          Paragraph(diag_text, body_style)],
     ]
-    t_summary = Table(summary_box, colWidths=[130, 370])
+    t_summary = Table(summary_box, colWidths=[140, 360])
     t_summary.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#0F172A")),
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F5F9")),
@@ -295,44 +327,47 @@ def generate_pdf_payload(
 
     # ---- Hydraulics Summary ----
     elements.append(Paragraph("1. Primary Mechanical Hydraulics Summary", h1_style))
-    ecd = physics_results.get("ecd_ppg", physics_results.get("equivalent_circulating_density_ecd_ppg", 0.0))
-    spp = physics_results.get("standpipe_pressure_psi", physics_results.get("standpipe_pressure_spp_psi", 0.0))
-    ann_dp = physics_results.get("total_annular_dp_psi", physics_results.get("total_annular_pressure_loss_psi", 0.0))
-    pipe_dp = physics_results.get("total_pipe_dp_psi", physics_results.get("total_pipe_pressure_loss_psi", 0.0))
+    ecd = physics_results.get("ecd_ppg", 0.0)
+    ann_dp = physics_results.get("total_annular_dp_psi", 0.0)
+    bhp = physics_results.get("bottom_hole_pressure_psi", 0.0)
+    hydrostatic = physics_results.get("hydrostatic_pressure_psi", 0.0)
+
+    ecd_status = "PASS" if (pore_limit <= ecd <= frac_limit) else "EXCURSION"
+    ann_dp_status = diagnostic_results.get("annular_dp_status", "CALCULATED")
 
     comp_rows = [
         [
             Paragraph("Metric Parameter", header_white_style),
-            Paragraph("Value", header_white_style),
-            Paragraph("Safe Limit", header_white_style),
+            Paragraph("Calculated Value", header_white_style),
+            Paragraph("Configured Limit / Range", header_white_style),
             Paragraph("Status", header_white_style),
         ],
         [
             Paragraph("Equivalent Circulating Density (ECD)", body_style),
             Paragraph(f"{ecd:.3f} ppg", body_style),
-            Paragraph("< 15.5 ppg", body_style),
-            Paragraph("PASS" if ecd < 15.5 else "FAIL", bold_body),
+            Paragraph(f"{pore_limit:.2f} – {frac_limit:.2f} ppg", body_style),
+            Paragraph(ecd_status, bold_body),
         ],
         [
-            Paragraph("Standpipe Pressure (SPP)", body_style),
-            Paragraph(f"{spp:.1f} psi", body_style),
-            Paragraph("< 3500 psi", body_style),
-            Paragraph("PASS" if spp < 3500 else "WARNING", bold_body),
+            Paragraph("Bottom Hole Pressure (BHP)", body_style),
+            Paragraph(f"{bhp:,.1f} psi", body_style),
+            Paragraph("Hydrostatic + Annular DP", body_style),
+            Paragraph("NOMINAL", bold_body),
         ],
         [
-            Paragraph("Annular Pressure Loss", body_style),
-            Paragraph(f"{ann_dp:.1f} psi", body_style),
-            Paragraph("Dynamic", body_style),
-            Paragraph("PASS", bold_body),
+            Paragraph("Hydrostatic Pressure", body_style),
+            Paragraph(f"{hydrostatic:,.1f} psi", body_style),
+            Paragraph("Static Mud Column", body_style),
+            Paragraph("NOMINAL", bold_body),
         ],
         [
-            Paragraph("Drillstring Pressure Loss", body_style),
-            Paragraph(f"{pipe_dp:.1f} psi", body_style),
-            Paragraph("Dynamic", body_style),
-            Paragraph("PASS", bold_body),
+            Paragraph("Total Annular Pressure Drop", body_style),
+            Paragraph(f"{ann_dp:,.1f} psi", body_style),
+            Paragraph("Dynamic Friction Loss", body_style),
+            Paragraph(ann_dp_status, bold_body),
         ],
     ]
-    t_comp = Table(comp_rows, colWidths=[195, 100, 110, 95])
+    t_comp = Table(comp_rows, colWidths=[185, 105, 120, 90])
     t_comp.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
@@ -344,14 +379,14 @@ def generate_pdf_payload(
     ]))
     elements.extend([t_comp, Spacer(1, 10)])
 
-    # ---- Pressure Profile Chart ----
-    elements.append(Paragraph("2. Pressure Profile Visualization", h1_style))
-    elements.append(create_pressure_window_chart())
+    # ---- Dynamic Pressure Profile Chart ----
+    elements.append(Paragraph("2. Pressure Profile Window", h1_style))
+    elements.append(create_pressure_window_chart(pore_limit, ecd, frac_limit))
     elements.append(Spacer(1, 12))
 
-    # ---- Cementing (optional) ----
+    # ---- Cementing (Optional) ----
     if cementing_results:
-        elements.append(Paragraph("3. Cementing Job Summary", h1_style))
+        elements.append(Paragraph("3. Primary Cementing Job Summary", h1_style))
         c_data = [
             [Paragraph("Parameter", header_white_style), Paragraph("Value", header_white_style)],
             [Paragraph("Lead Slurry Volume", body_style), f"{cementing_results.get('lead_slurry_volume_bbl', 0.0):.2f} bbl"],
@@ -375,17 +410,22 @@ def generate_pdf_payload(
 
         additives = cementing_results.get("suggested_additives", [])
         if additives:
-            elements.append(Paragraph("Suggested Additives", h1_style))
+            elements.append(Paragraph("Suggested Cement Additives", h1_style))
             for add in additives:
                 if isinstance(add, dict):
                     name = add.get("name", "Additive")
                     cat = add.get("category", "General")
                     desc = add.get("description", "")
                     elements.append(Paragraph(f"• <b>{name}</b> ({cat}) – {desc}", body_style))
+            
+            elements.append(Paragraph(
+                "<i>Note: Additive suggestions are preliminary engineering heuristics and require verification against cement-service-company laboratory testing and approved job design.</i>",
+                disclaimer_style
+            ))
             elements.append(Spacer(1, 8))
 
-    # ---- AI Recommendations & Sign-off ----
-    elements.append(Paragraph("4. AI Action Blueprint & Engineering Sign-Off", h1_style))
+    # ---- Recommendations & Sign-off ----
+    elements.append(Paragraph("4. Engineering Action Recommendations & Sign-Off", h1_style))
     recs = diagnostic_results.get(
         "actionable_recommendations",
         [diagnostic_results.get("recommendation", "Maintain standard operations inside safe pressure window.")]
