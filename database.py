@@ -1,19 +1,31 @@
 """Database models and async session management for PetroNexa."""
 from datetime import datetime, timezone
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    AsyncSession,
+    async_sessionmaker,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy import String, Integer, ForeignKey, DateTime, JSON
 from config import settings
 
 DATABASE_URL = settings.database_url
 
-# Configure driver arguments safely based on dialect
 connect_args = {}
-if DATABASE_URL.startswith("sqlite"):
-    connect_args["check_same_thread"] = False
+if DATABASE_URL.startswith("sqlite+aiosqlite"):
+    connect_args["timeout"] = 30
 
-engine = create_async_engine(DATABASE_URL, echo=False, connect_args=connect_args)
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args=connect_args,
+)
+
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    expire_on_commit=False,
+    class_=AsyncSession,
+)
 
 
 class Base(DeclarativeBase):
