@@ -1,33 +1,30 @@
-# PetroNexa release checklist
+# PetroNexa v1.0 release checklist
 
-## Engineering
-- [ ] Every new equation has a reference and unit test.
-- [ ] Python reference results are cross-checked against the mobile implementation before offline mode is enabled.
-- [ ] Boundary cases and invalid units are tested.
-- [ ] Reports clearly state assumptions and inputs.
-- [ ] Safety-critical outputs are labelled as engineering aids, not automatic operational authority.
+## Fixed in this package
+- [x] Python backend syntax repaired.
+- [x] Authentication dependency/schemas restored.
+- [x] Flutter source moved to standard `mobile_app/lib` structure.
+- [x] Flutter logo assets included.
+- [x] API URL made environment-specific.
+- [x] JWT session persistence and logout fixed.
 
-## Security
-- [ ] Production `JWT_SECRET_KEY` is set from a secret manager.
-- [ ] Production PostgreSQL is configured.
-- [ ] CORS contains only known client origins.
-- [ ] HTTPS is enforced.
-- [ ] Database backups are configured.
-- [ ] Rate limiting and account lockout are added before public launch.
-- [ ] No `.env` or credentials are committed.
+## Still required before public store launch
+- [ ] Deploy the FastAPI backend on HTTPS.
+- [ ] Set production JWT secret using a secret manager.
+- [ ] Use PostgreSQL in production.
+- [ ] Restrict CORS to approved origins.
+- [ ] Add rate limiting/account lockout.
+- [ ] Configure database backups/monitoring.
+- [ ] Generate Android/iOS platform folders with Flutter.
+- [ ] Set Android application ID and iOS bundle identifier.
+- [ ] Configure signing keys/certificates.
+- [ ] Create app icons/splash sizes for all platforms.
+- [ ] Publish privacy policy and terms.
+- [ ] Prepare store screenshots, description and support contact.
+- [ ] Complete Flutter analyse/tests on a real build environment.
+- [ ] Validate engineering outputs against the Python reference tests.
+- [ ] Review the engineering disclaimer with a qualified engineer.
 
-## Mobile/Desktop
-- [ ] `flutter analyze` passes.
-- [ ] Android release build is signed.
-- [ ] iOS release build is signed.
-- [ ] Windows/macOS/Linux builds are tested.
-- [ ] App icon and splash assets are supplied in all required sizes.
-- [ ] API base URL is environment-specific.
-- [ ] Offline sync conflict rules are tested before enabling offline edits.
+## Critical distinction
 
-## Store/legal
-- [ ] Privacy policy published.
-- [ ] Terms of use published.
-- [ ] Support contact published.
-- [ ] App screenshots and store descriptions prepared.
-- [ ] Engineering disclaimer reviewed by the project owner/qualified engineer.
+This ZIP is **store-ready source**, not a finished signed Play Store/App Store binary. Store binaries require the Flutter SDK, native build toolchains and the developer's signing credentials.

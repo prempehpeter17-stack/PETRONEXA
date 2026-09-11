@@ -40,7 +40,7 @@ class UserModel(Base):
     email: Mapped[str] = mapped_column(String(150), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(40), default="drilling_engineer")
-    company_name: Mapped[str] = mapped_column(String(150), default="")
+    company_name: Mapped[str] = mapped_column(String(150), default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

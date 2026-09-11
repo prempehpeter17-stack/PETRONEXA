@@ -1,49 +1,61 @@
-"""
-Security utilities: Password hashing and JWT generation.
-"""
+"""Authentication schemas and JWT dependency helpers for PetroNexa."""
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import select
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-from jose import jwt
-from passlib.context import CryptContext
 from config import settings
+from database import AsyncSessionLocal, UserModel
 
-# Password Hashing Setup
-# Using bcrypt for standard production password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a plain password against the stored hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    username: str | None = Field(default=None, max_length=80)
+    company_name: str | None = Field(default=None, max_length=150)
 
 
-def get_password_hash(password: str) -> str:
-    """Generate a secure hash from a plain text password."""
-    return pwd_context.hash(password)
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: EmailStr
+    role: str
+    company_name: str | None = None
+
+    model_config = {"from_attributes": True}
 
 
-def create_access_token(
-    data: dict, expires_delta: Optional[timedelta] = None
-) -> str:
-    """
-    Generate a signed JWT access token.
-    Embeds target subject (email) into payload with expiration time.
-    """
-    to_encode = data.copy()
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(
-            minutes=ACCESS_TOKEN_EXPIRE_MINUTES
-        )
 
-    to_encode.update({"exp": expire})
-
-    encoded_jwt = jwt.encode(
-        to_encode, settings.secret, algorithm=settings.jwt_algorithm
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserModel:
+    credentials_error = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired authentication token.",
+        headers={"WWW-Authenticate": "Bearer"},
     )
-    return encoded_jwt
+    try:
+        payload = jwt.decode(
+            token,
+            settings.secret,
+            algorithms=[settings.jwt_algorithm],
+        )
+        email = payload.get("sub")
+        if not email:
+            raise credentials_error
+    except (JWTError, ValueError, TypeError):
+        raise credentials_error
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(UserModel).where(UserModel.email == str(email).strip().lower())
+        )
+        user = result.scalars().first()
+        if user is None:
+            raise credentials_error
+        return user

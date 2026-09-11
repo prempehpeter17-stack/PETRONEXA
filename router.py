@@ -60,7 +60,7 @@ async def register_user(
         username=username,
         hashed_password=get_password_hash(user_data.password),
         role=DEFAULT_USER_ROLE,
-        company_name=user_data.company_name.strip() if user_data.company_name else None,
+        company_name=user_data.company_name.strip() if user_data.company_name else "",
     )
 
     try:
