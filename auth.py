@@ -7,6 +7,9 @@ from sqlalchemy import select
 
 from config import settings
 from database import AsyncSessionLocal, UserModel
+# Backwards-compatible password helpers for the Streamlit client and legacy callers.
+# The canonical implementations live in security.py.
+from security import get_password_hash, verify_password
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
