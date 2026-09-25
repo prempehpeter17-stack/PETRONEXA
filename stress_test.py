@@ -63,9 +63,9 @@ class StressTestSuite:
                 results = engine.solve()
                 
                 # Basic sanity checks
-                assert results["equivalent_circulating_density_ecd_ppg"] > 0
-                assert results["standpipe_pressure_spp_psi"] > 0
-                assert results["total_annular_pressure_loss_psi"] >= 0
+                assert results["ecd_ppg"] > 0
+                assert results["standpipe_pressure_psi"] > 0
+                assert results["total_annular_dp_psi"] >= 0
                 passed += 1
                 self.results.append({"passed": True, "config": config})
             except Exception as e:

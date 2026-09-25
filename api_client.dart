@@ -53,6 +53,12 @@ class ApiClient {
   Future<Map<String, dynamic>> me() => _get('/api/v1/me');
   Future<Map<String, dynamic>> hydraulics(Map<String, dynamic> payload) => _post('/api/v1/hydraulics/calculate', payload);
   Future<Map<String, dynamic>> cementing(Map<String, dynamic> payload) => _post('/api/v1/cementing/design', payload);
+  Future<Map<String, dynamic>> reservoirProperties(Map<String, dynamic> payload) => _post('/api/v1/reservoir/properties', payload);
+  Future<Map<String, dynamic>> reservoirDarcy(Map<String, dynamic> payload) => _post('/api/v1/reservoir/darcy', payload);
+  Future<Map<String, dynamic>> reservoirRadialFlow(Map<String, dynamic> payload) => _post('/api/v1/reservoir/radial-flow', payload);
+  Future<Map<String, dynamic>> reservoirMaterialBalance(Map<String, dynamic> payload) => _post('/api/v1/reservoir/material-balance', payload);
+  Future<Map<String, dynamic>> reservoirVogel(Map<String, dynamic> payload) => _post('/api/v1/reservoir/ipr/vogel', payload);
+  Future<Map<String, dynamic>> reservoirProductivityIndex(Map<String, dynamic> payload) => _post('/api/v1/reservoir/productivity-index', payload);
   Future<List<dynamic>> projects() => _getList('/api/v1/projects');
 
   Future<Map<String, dynamic>> createProject(Map<String, dynamic> payload) =>

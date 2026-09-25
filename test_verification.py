@@ -48,7 +48,7 @@ def verify_hydrostatic_pressure():
     
     # The total SPP includes friction; we extract hydrostatic from ECD formula
     # ECD = MW + (Annular DP)/(0.052*TVD) => Annular DP = (ECD - MW)*0.052*TVD
-    ecd = results["equivalent_circulating_density_ecd_ppg"]
+    ecd = results["ecd_ppg"]
     annular_dp = (ecd - mw_ppg) * 0.052 * depth_ft
     hydrostatic_psi = mw_ppg * 0.052 * depth_ft
     

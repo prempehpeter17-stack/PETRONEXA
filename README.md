@@ -72,17 +72,32 @@ flutter build ipa --release --dart-define=PETRONEXA_API_URL=https://YOUR-API-DOM
 
 Then sign/upload the resulting build through Google Play Console / App Store Connect.
 
-## Current v1 scope
+## Current upgraded scope
 
-- Authentication
-- Hydraulics calculation + diagnostics
+- Authentication and persistent JWT sessions
+- Drilling hydraulics + diagnostics
 - Primary cementing design
 - Project listing
-- Persistent session
+- Reservoir Engineering v1
+  - Reservoir properties
+  - Darcy flow
+  - Radial flow
+  - Material balance
+  - Productivity Index
+  - Vogel IPR
+- Shared FastAPI architecture for future PVT, Production, Petrophysics and Economics modules
 - PetroNexa branding
-
-Next modules can be added without changing the engineering-core architecture: mud engineering, trajectory/MCM, pressure window, bit hydraulics, BHA/MWD, surge/swab, well control, petrophysics, reservoir/PVT, production and economics.
 
 ## Engineering disclaimer
 
 PetroNexa outputs are engineering decision-support aids. They are not automatic operational authority. Inputs, assumptions, units and results must be reviewed by a qualified petroleum/drilling/cementing engineer before field use.
+
+
+## Connecting Flutter to the PetroNexa API
+
+1. Start the FastAPI backend: `uvicorn main:app --host 0.0.0.0 --port 8000`.
+2. Android emulator: run Flutter with `--dart-define=PETRONEXA_API_URL=http://10.0.2.2:8000`.
+3. Physical Android phone on the same Wi-Fi: use the laptop's LAN address, e.g. `http://192.168.1.20:8000`, and run Flutter with that address.
+4. Deployed backend: use the HTTPS API URL, e.g. `https://api.yourdomain.com`, with `--dart-define=PETRONEXA_API_URL=...`.
+5. The Flutter client stores the JWT returned by `/api/v1/auth/login` and automatically sends it as `Authorization: Bearer <token>`.
+6. Before Play Store/App Store release, use HTTPS, a production database, a persistent JWT secret, and a real production API domain.

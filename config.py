@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     def validate_environment(cls, v: str) -> str:
         allowed = {"development", "testing", "production"}
         v_clean = v.strip().lower()
+        if v_clean == 'test':
+            v_clean = 'testing'
         if v_clean not in allowed:
             raise ValueError(f"environment must be one of {allowed}, got '{v}'")
         return v_clean

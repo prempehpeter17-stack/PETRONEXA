@@ -2,7 +2,7 @@
 PetroNexa Test Suite - Input Validation & Non-Newtonian Physics Check
 """
 import pytest
-from source.physics import DrillingFluidEngine, WellSegment
+from physics import DrillingHydraulicsEngine as DrillingFluidEngine, WellSegment
 
 def test_invalid_mud_weight_raises_error():
     with pytest.raises(ValueError, match="Invalid surface_mud_weight_ppg"):
@@ -43,4 +43,4 @@ def test_generalized_reynolds_calculation():
 
 def test_well_segment_invalid_geometry():
     with pytest.raises(ValueError, match="Inner diameter .* must be less than outer diameter"):
-        WellSegment(length_ft=1000, inner_diameter_in=8.5, outer_diameter_in=6.0, mud_weight_ppg=10.0)
+        WellSegment(name="legacy-test", length_ft=1000, inner_diameter_in=8.5, outer_diameter_in=6.0, hole_id_in=10.0, mud_weight_ppg=10.0)

@@ -23,6 +23,7 @@ from pdf_generator import generate_pdf_payload
 from database import init_db, get_db, UserModel, Project
 from auth import get_current_user
 from router import router as auth_router
+from reservoir import ReservoirEngineeringEngine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("petronexa.api")
@@ -68,6 +69,8 @@ class HydraulicsPayloadSchema(BaseModel):
     plastic_viscosity_cp: float = Field(default=20.0, ge=0.0)
     yield_point_lb_100ft2: float = Field(default=15.0, ge=0.0)
     segments: Optional[List[WellSegmentSchema]] = None
+    pore_pressure_ppg: float = Field(default=9.0, gt=0.0)
+    fracture_gradient_ppg: float = Field(default=15.0, gt=0.0)
 
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -144,7 +147,8 @@ async def calculate_hydraulics(payload: HydraulicsPayloadSchema, current_user: U
                 engine.add_segment(
                     WellSegment(
                         name=seg.name,
-                        length_ft=segment_length,
+                        top_depth_ft=seg.top_md,
+                        bottom_depth_ft=seg.bottom_md,
                         pipe_od_in=seg.pipe_od,
                         pipe_id_in=seg.pipe_id,
                         hole_id_in=seg.hole_id,
@@ -157,7 +161,8 @@ async def calculate_hydraulics(payload: HydraulicsPayloadSchema, current_user: U
             engine.add_segment(
                 WellSegment(
                     name="Default Drill String",
-                    length_ft=payload.total_depth_ft,
+                    top_depth_ft=0.0,
+                    bottom_depth_ft=payload.total_depth_ft,
                     pipe_od_in=5.0,
                     pipe_id_in=4.276,
                     hole_id_in=8.5,
@@ -168,7 +173,7 @@ async def calculate_hydraulics(payload: HydraulicsPayloadSchema, current_user: U
             )
 
         results = engine.solve()
-        diagnostics = ai_diagnostics.analyze_telemetry(physics_metrics=results, historical_esd=payload.surface_mud_weight_ppg) if ai_diagnostics else {}
+        diagnostics = ai_diagnostics.analyze_telemetry(physics_metrics=results, pore_limit=payload.pore_pressure_ppg, frac_limit=payload.fracture_gradient_ppg, historical_esd=payload.surface_mud_weight_ppg) if ai_diagnostics else {}
         return {"physics_results": results, "diagnostics": diagnostics}
 
     except HTTPException:
@@ -210,6 +215,86 @@ async def export_pdf_report(payload: HydraulicsPayloadSchema, current_user: User
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate technical PDF report.",
         )
+
+class ReservoirPropertiesPayload(BaseModel):
+    bulk_volume_acft: float = Field(gt=0)
+    net_to_gross: float = Field(gt=0, le=1)
+    porosity: float = Field(gt=0, le=1)
+    water_saturation: float = Field(gt=0, le=1)
+    permeability_md: float = Field(gt=0)
+    rock_compressibility_psi: float = Field(default=0.0, ge=0)
+    water_compressibility_psi: float = Field(default=0.0, ge=0)
+
+class DarcyPayload(BaseModel):
+    permeability_md: float = Field(gt=0)
+    thickness_ft: float = Field(gt=0)
+    pressure_drop_psi: float = Field(gt=0)
+    viscosity_cp: float = Field(gt=0)
+    formation_volume_factor_rb_stb: float = Field(gt=0)
+    length_ft: float = Field(gt=0)
+
+class RadialFlowPayload(BaseModel):
+    permeability_md: float = Field(gt=0)
+    thickness_ft: float = Field(gt=0)
+    reservoir_pressure_psi: float = Field(gt=0)
+    bottomhole_pressure_psi: float = Field(ge=0)
+    viscosity_cp: float = Field(gt=0)
+    formation_volume_factor_rb_stb: float = Field(gt=0)
+    drainage_radius_ft: float = Field(gt=0)
+    wellbore_radius_ft: float = Field(gt=0)
+    skin: float = 0.0
+
+class MaterialBalancePayload(BaseModel):
+    numerator_F: float = Field(gt=0)
+    water_influx_rb: float = Field(default=0.0, ge=0)
+    oil_expansion_Eo_rb_stb: float = Field(gt=0)
+    gas_cap_ratio_m: float = Field(default=0.0, ge=0)
+    gas_cap_expansion_Eg_rb_stb: float = Field(default=0.0, ge=0)
+    formation_water_expansion_Efw_rb_stb: float = Field(default=0.0, ge=0)
+
+class VogelIPRPayload(BaseModel):
+    reservoir_pressure_psi: float = Field(gt=0)
+    test_rate_stb_day: float = Field(gt=0)
+    test_bhp_psi: float = Field(ge=0)
+    target_bhp_psi: float = Field(ge=0)
+
+class ProductivityIndexPayload(BaseModel):
+    test_rate_stb_day: float = Field(gt=0)
+    reservoir_pressure_psi: float = Field(gt=0)
+    bottomhole_pressure_psi: float = Field(ge=0)
+
+def _reservoir_call(fn, payload):
+    try:
+        return fn(**payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception:
+        logger.exception("Reservoir calculation failure")
+        raise HTTPException(status_code=500, detail="Reservoir calculation failed due to an internal server error.")
+
+@app.post("/api/v1/reservoir/properties", tags=["Reservoir Engineering"])
+async def reservoir_properties(payload: ReservoirPropertiesPayload, current_user: UserModel = Depends(get_current_user)):
+    return _reservoir_call(ReservoirEngineeringEngine.properties, payload)
+
+@app.post("/api/v1/reservoir/darcy", tags=["Reservoir Engineering"])
+async def reservoir_darcy(payload: DarcyPayload, current_user: UserModel = Depends(get_current_user)):
+    return _reservoir_call(ReservoirEngineeringEngine.darcy_rate, payload)
+
+@app.post("/api/v1/reservoir/radial-flow", tags=["Reservoir Engineering"])
+async def reservoir_radial_flow(payload: RadialFlowPayload, current_user: UserModel = Depends(get_current_user)):
+    return _reservoir_call(ReservoirEngineeringEngine.radial_flow, payload)
+
+@app.post("/api/v1/reservoir/material-balance", tags=["Reservoir Engineering"])
+async def reservoir_material_balance(payload: MaterialBalancePayload, current_user: UserModel = Depends(get_current_user)):
+    return _reservoir_call(ReservoirEngineeringEngine.material_balance, payload)
+
+@app.post("/api/v1/reservoir/ipr/vogel", tags=["Reservoir Engineering"])
+async def reservoir_vogel(payload: VogelIPRPayload, current_user: UserModel = Depends(get_current_user)):
+    return _reservoir_call(ReservoirEngineeringEngine.vogel_ipr, payload)
+
+@app.post("/api/v1/reservoir/productivity-index", tags=["Reservoir Engineering"])
+async def reservoir_productivity_index(payload: ProductivityIndexPayload, current_user: UserModel = Depends(get_current_user)):
+    return _reservoir_call(ReservoirEngineeringEngine.productivity_index, payload)
 
 @app.post("/api/v1/cementing/design", tags=["Cementing Engine"])
 async def design_cement_job(params: PrimaryCementingInput, current_user: UserModel = Depends(get_current_user)):

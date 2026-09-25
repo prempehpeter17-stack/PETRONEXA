@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'reservoir_screen.dart';
 import '../services/api_client.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -28,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final pages = [
       HydraulicsPage(api: widget.api),
       CementingPage(api: widget.api),
+      ReservoirScreen(api: widget.api),
       ProjectsPage(api: widget.api),
     ];
     return Scaffold(
@@ -46,7 +48,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           _nav(Icons.water_drop, 'Hydraulics', 0),
           _nav(Icons.construction, 'Cementing', 1),
-          _nav(Icons.folder, 'Projects', 2),
+          _nav(Icons.water_drop_outlined, 'Reservoir', 2),
+          _nav(Icons.folder, 'Projects', 3),
         ]),
       ),
       body: pages[tab],

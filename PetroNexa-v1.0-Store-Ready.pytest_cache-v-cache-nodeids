@@ -1,0 +1,12 @@
+[
+  "test_pymudcement.py::test_generalized_reynolds_calculation",
+  "test_pymudcement.py::test_invalid_mud_weight_raises_error",
+  "test_pymudcement.py::test_tvd_exceeding_md_raises_error",
+  "test_pymudcement.py::test_well_segment_invalid_geometry",
+  "test_reservoir.py::test_darcy_rate_positive",
+  "test_reservoir.py::test_material_balance",
+  "test_reservoir.py::test_productivity_index",
+  "test_reservoir.py::test_radial_flow_and_pi",
+  "test_reservoir.py::test_reservoir_properties",
+  "test_reservoir.py::test_vogel_ipr"
+]
