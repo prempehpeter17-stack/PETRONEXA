@@ -2,7 +2,7 @@
 import pandas as pd
 import streamlit as st
 
-from reservoir import ReservoirEngineeringEngine
+from reservoir.engine import ReservoirEngineeringEngine
 
 
 def _show_result(result: dict):
