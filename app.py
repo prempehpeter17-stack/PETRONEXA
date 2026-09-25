@@ -141,8 +141,8 @@ html.theme-dark .stale-badge, [data-theme="dark"] .stale-badge { background: #45
 
 
 # Modular discipline UIs
-from ui.drilling import render_drilling_sidebar, render_drilling_workspace
-from ui.reservoir import render_reservoir_workspace
+from drilling_ui import render_drilling_sidebar, render_drilling_workspace
+from reservoir_ui import render_reservoir_workspace
 
 # ============================
 # AUTHENTICATION ENGINE
