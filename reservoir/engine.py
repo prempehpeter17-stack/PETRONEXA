@@ -15,50 +15,63 @@ class ReservoirEngineeringEngine:
 
     @staticmethod
     def properties(
+        bulk_rock_volume_acre_ft: float,
+        net_to_gross: float,
         porosity: float,
         water_saturation: float,
-        oil_saturation: float = None,
-        gas_saturation: float = None,
-    ) -> Dict[str, float]:
-        """Calculate saturation checks and hydrocarbon pore volume."""
-        phi = float(porosity)
-        sw = float(water_saturation)
+        permeability_md: float,
+        rock_compressibility_per_psi: float,
+        water_compressibility_per_psi: float,
+    ) -> Dict[str, Any]:
+        """Calculate basic reservoir rock and pore-volume properties."""
 
-        if not 0 <= phi <= 1:
-            raise ValueError("Porosity must be between 0 and 1.")
-        if not 0 <= sw <= 1:
-            raise ValueError("Water saturation must be between 0 and 1.")
-
-        result = {
-            "porosity_fraction": phi,
-            "porosity_percent": phi * 100,
-            "water_saturation_fraction": sw,
-            "water_saturation_percent": sw * 100,
-            "hydrocarbon_saturation_fraction": 1 - sw,
-            "hydrocarbon_saturation_percent": (1 - sw) * 100,
+        values = {
+            "Bulk rock volume": bulk_rock_volume_acre_ft,
+            "Net-to-gross": net_to_gross,
+            "Porosity": porosity,
+            "Water saturation": water_saturation,
+            "Permeability": permeability_md,
+            "Rock compressibility": rock_compressibility_per_psi,
+            "Water compressibility": water_compressibility_per_psi,
         }
 
-        if oil_saturation is not None:
-            so = float(oil_saturation)
-            if not 0 <= so <= 1:
-                raise ValueError("Oil saturation must be between 0 and 1.")
-            result["oil_saturation_fraction"] = so
-            result["oil_saturation_percent"] = so * 100
+        for name, value in values.items():
+            if not math.isfinite(float(value)):
+                raise ValueError(f"{name} must be a finite number.")
 
-        if gas_saturation is not None:
-            sg = float(gas_saturation)
-            if not 0 <= sg <= 1:
-                raise ValueError("Gas saturation must be between 0 and 1.")
-            result["gas_saturation_fraction"] = sg
-            result["gas_saturation_percent"] = sg * 100
+        if bulk_rock_volume_acre_ft <= 0:
+            raise ValueError("Bulk rock volume must be greater than zero.")
+        if not 0 < net_to_gross <= 1:
+            raise ValueError("Net-to-gross must be greater than 0 and at most 1.")
+        if not 0 < porosity <= 1:
+            raise ValueError("Porosity must be greater than 0 and at most 1.")
+        if not 0 <= water_saturation <= 1:
+            raise ValueError("Water saturation must be between 0 and 1.")
+        if permeability_md < 0:
+            raise ValueError("Permeability cannot be negative.")
+        if rock_compressibility_per_psi < 0 or water_compressibility_per_psi < 0:
+            raise ValueError("Compressibilities cannot be negative.")
 
-        if oil_saturation is not None and gas_saturation is not None:
-            if abs(sw + float(oil_saturation) + float(gas_saturation) - 1) > 1e-6:
-                raise ValueError(
-                    "Water, oil, and gas saturations must sum to 1."
-                )
+        net_rock_volume = bulk_rock_volume_acre_ft * net_to_gross
+        pore_volume_acre_ft = net_rock_volume * porosity
+        pore_volume_rb = pore_volume_acre_ft * 7758.0
+        hydrocarbon_pore_volume_rb = pore_volume_rb * (1.0 - water_saturation)
 
-        return result
+        return {
+            "bulk_rock_volume_acre_ft": bulk_rock_volume_acre_ft,
+            "net_to_gross": net_to_gross,
+            "net_rock_volume_acre_ft": net_rock_volume,
+            "porosity_fraction": porosity,
+            "porosity_percent": porosity * 100.0,
+            "water_saturation_fraction": water_saturation,
+            "water_saturation_percent": water_saturation * 100.0,
+            "permeability_md": permeability_md,
+            "pore_volume_acre_ft": pore_volume_acre_ft,
+            "pore_volume_rb": pore_volume_rb,
+            "hydrocarbon_pore_volume_rb": hydrocarbon_pore_volume_rb,
+            "rock_compressibility_per_psi": rock_compressibility_per_psi,
+            "water_compressibility_per_psi": water_compressibility_per_psi,
+        }
 
     @staticmethod
     def darcy_rate(
