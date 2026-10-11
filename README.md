@@ -1,103 +1,49 @@
-# PetroNexa v1.0 — Store-Ready Source
+# PetroNexa — Petroleum Engineering Web Platform
 
-PetroNexa is structured as a Flutter client + FastAPI engineering backend.
+PetroNexa is a web-based petroleum engineering workspace built with Streamlit, with a FastAPI service for authenticated engineering endpoints.
 
-## What was fixed from the supplied ZIP
+## Current web features
 
-- Repaired the corrupted/duplicated `main.py` (the supplied file contained two concatenated versions and was not valid Python).
-- Restored the missing authentication schemas and `get_current_user` dependency.
-- Unified registration/login with the PBKDF2 security implementation already used by `router.py`.
-- Moved the Flutter client into a standard `mobile_app/lib/...` structure.
-- Added the missing Flutter `assets/` directory and PetroNexa logo.
-- Added persistent JWT session checking.
-- Added proper logout navigation.
-- Added input validation/error handling around engineering calls.
-- Added a production-safe API URL override using `--dart-define`.
-- Kept the existing Python engineering engines instead of rewriting their equations.
+- Email/password account registration and sign-in
+- Separate tertiary-student and working-professional profiles
+- User-provided institution or company name
+- Optional SMS updates consent (SMS delivery requires a configured provider; it is not enabled by this code alone)
+- Drilling hydraulics and diagnostics
+- Cementing design and technical PDF reports
+- Reservoir engineering calculations: reservoir properties, Darcy flow, radial flow, productivity index, Vogel IPR and material balance
+- User project endpoints in the API
 
-## Important: this is source-ready, not signed-store binaries
+## Run the Streamlit web app
 
-I cannot create a genuine signed Android APK/AAB or iOS IPA without the Flutter SDK, Android/iOS build toolchains, certificates and store credentials. The package is prepared so those platform folders can be generated cleanly.
-
-## 1. Prepare Flutter platforms
+Python 3.11 or newer is recommended.
 
 ```bash
-cd mobile_app
-flutter create . --platforms=android,ios,windows,macos,linux
-flutter pub get
-flutter analyze
+python -m venv .venv
+# Windows: .venv\\Scripts\\activate
+# macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app.py
 ```
 
-## 2. Run against a deployed HTTPS API
+Open the local URL printed by Streamlit (normally `http://localhost:8501`). The app uses SQLite by default and creates `petronexa.db` locally. Do not commit database files or `.env` secrets.
 
-```bash
-flutter run --dart-define=PETRONEXA_API_URL=https://YOUR-API-DOMAIN
-```
-
-Do **not** ship the default `https://api.example.com`. Replace it with the real deployed PetroNexa API.
-
-For Android emulator local development, use `http://10.0.2.2:8000` and configure Android cleartext traffic only for a development build. For a physical phone, use the computer's LAN IP and the appropriate network configuration.
-
-## 3. Backend
-
-Install Python dependencies:
+## Run the API service
 
 ```bash
 pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-For production set:
+API documentation is available at `/docs` while the service is running. For production, configure a persistent database, a strong `JWT_SECRET_KEY`, approved `CORS_ORIGINS`, HTTPS and a managed secret store. Never deploy with development secrets.
 
-- `ENVIRONMENT=production`
-- `JWT_SECRET_KEY=<strong-secret-from-secret-manager>`
-- `DATABASE_URL=postgresql+asyncpg://...`
-- `CORS_ORIGINS=<only your approved app/web origins>`
+## Docker Compose
 
-Use HTTPS at the reverse proxy/load balancer.
+The included `docker-compose.yml` starts the API and Streamlit web interface as separate services. Create a local `.env` file with the required production/development settings before using Compose, or remove `env_file` from the Compose file for a local-only test environment.
 
-## 4. Store build
+## User accounts and SMS
 
-Android:
+Registration stores a user's full name, username, email, mobile number, country, account type and the relevant institution/company and study/job profile. SMS preference is stored, but sending SMS messages requires a provider integration and must not be advertised as active until configured. Account type is a profile category, not proof of professional accreditation or an authorisation role.
 
-```bash
-flutter build appbundle --release --dart-define=PETRONEXA_API_URL=https://YOUR-API-DOMAIN
-```
+## Engineering notice
 
-iOS (on macOS with Xcode):
-
-```bash
-flutter build ipa --release --dart-define=PETRONEXA_API_URL=https://YOUR-API-DOMAIN
-```
-
-Then sign/upload the resulting build through Google Play Console / App Store Connect.
-
-## Current upgraded scope
-
-- Authentication and persistent JWT sessions
-- Drilling hydraulics + diagnostics
-- Primary cementing design
-- Project listing
-- Reservoir Engineering v1
-  - Reservoir properties
-  - Darcy flow
-  - Radial flow
-  - Material balance
-  - Productivity Index
-  - Vogel IPR
-- Shared FastAPI architecture for future PVT, Production, Petrophysics and Economics modules
-- PetroNexa branding
-
-## Engineering disclaimer
-
-PetroNexa outputs are engineering decision-support aids. They are not automatic operational authority. Inputs, assumptions, units and results must be reviewed by a qualified petroleum/drilling/cementing engineer before field use.
-
-
-## Connecting Flutter to the PetroNexa API
-
-1. Start the FastAPI backend: `uvicorn main:app --host 0.0.0.0 --port 8000`.
-2. Android emulator: run Flutter with `--dart-define=PETRONEXA_API_URL=http://10.0.2.2:8000`.
-3. Physical Android phone on the same Wi-Fi: use the laptop's LAN address, e.g. `http://192.168.1.20:8000`, and run Flutter with that address.
-4. Deployed backend: use the HTTPS API URL, e.g. `https://api.yourdomain.com`, with `--dart-define=PETRONEXA_API_URL=...`.
-5. The Flutter client stores the JWT returned by `/api/v1/auth/login` and automatically sends it as `Authorization: Bearer <token>`.
-6. Before Play Store/App Store release, use HTTPS, a production database, a persistent JWT secret, and a real production API domain.
+PetroNexa calculations are engineering decision-support tools. Inputs, assumptions, units and results must be checked against appropriate engineering references and reviewed by a qualified engineer before field use.

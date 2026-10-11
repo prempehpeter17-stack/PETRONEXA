@@ -1,7 +1,6 @@
 """PetroNexa FastAPI backend.
 
-The API exposes the existing validated engineering engines to mobile, desktop,
-and web clients. Engineering calculations remain in pure-Python modules so they
+The API exposes validated engineering services for the PetroNexa web application. Engineering calculations remain in pure-Python modules so they
 can be tested independently from the UI.
 """
 import logging
@@ -95,6 +94,14 @@ async def me(current_user: UserModel = Depends(get_current_user)):
         "email": current_user.email,
         "role": current_user.role,
         "company_name": current_user.company_name,
+        "full_name": current_user.full_name,
+        "phone_number": current_user.phone_number,
+        "country": current_user.country,
+        "account_type": current_user.account_type,
+        "study_level": current_user.study_level,
+        "programme": current_user.programme,
+        "job_title": current_user.job_title,
+        "sms_opt_in": current_user.sms_opt_in,
     }
 
 @app.get("/api/v1/projects", tags=["Projects"])

@@ -61,6 +61,14 @@ async def register_user(
         hashed_password=get_password_hash(user_data.password),
         role=DEFAULT_USER_ROLE,
         company_name=user_data.company_name.strip() if user_data.company_name else "",
+        full_name=(user_data.full_name or "").strip(),
+        phone_number=(user_data.phone_number or "").strip(),
+        country=(user_data.country or "").strip(),
+        account_type=user_data.account_type,
+        study_level=(user_data.study_level or "").strip(),
+        programme=(user_data.programme or "").strip(),
+        job_title=(user_data.job_title or "").strip(),
+        sms_opt_in=user_data.sms_opt_in,
     )
 
     try:

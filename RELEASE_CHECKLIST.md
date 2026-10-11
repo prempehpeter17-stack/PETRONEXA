@@ -1,30 +1,18 @@
-# PetroNexa v1.0 release checklist
+# PetroNexa Web Release Checklist
 
-## Fixed in this package
-- [x] Python backend syntax repaired.
-- [x] Authentication dependency/schemas restored.
-- [x] Flutter source moved to standard `mobile_app/lib` structure.
-- [x] Flutter logo assets included.
-- [x] API URL made environment-specific.
-- [x] JWT session persistence and logout fixed.
+- [ ] Install dependencies from `requirements.txt` in a clean virtual environment.
+- [ ] Run `python -m compileall .`.
+- [ ] Run the automated test suite with `pytest -q`.
+- [ ] Test registration for student and professional accounts.
+- [ ] Test duplicate email and duplicate username handling.
+- [ ] Test login with valid and invalid credentials.
+- [ ] Test schema migration against a copy of any existing production database.
+- [ ] Verify reservoir and drilling calculations against reference examples.
+- [ ] Configure persistent production database and strong `JWT_SECRET_KEY`.
+- [ ] Restrict CORS to the approved origins.
+- [ ] Configure HTTPS and secure deployment secrets.
+- [ ] Integrate and test an SMS provider before claiming SMS delivery is available.
+- [ ] Review privacy policy, terms and applicable data-protection obligations.
+- [ ] Verify the deployed Streamlit web app and API health endpoint.
 
-## Still required before public store launch
-- [ ] Deploy the FastAPI backend on HTTPS.
-- [ ] Set production JWT secret using a secret manager.
-- [ ] Use PostgreSQL in production.
-- [ ] Restrict CORS to approved origins.
-- [ ] Add rate limiting/account lockout.
-- [ ] Configure database backups/monitoring.
-- [ ] Generate Android/iOS platform folders with Flutter.
-- [ ] Set Android application ID and iOS bundle identifier.
-- [ ] Configure signing keys/certificates.
-- [ ] Create app icons/splash sizes for all platforms.
-- [ ] Publish privacy policy and terms.
-- [ ] Prepare store screenshots, description and support contact.
-- [ ] Complete Flutter analyse/tests on a real build environment.
-- [ ] Validate engineering outputs against the Python reference tests.
-- [ ] Review the engineering disclaimer with a qualified engineer.
-
-## Critical distinction
-
-This ZIP is **store-ready source**, not a finished signed Play Store/App Store binary. Store binaries require the Flutter SDK, native build toolchains and the developer's signing credentials.
+This checklist covers web deployment only. Engineering outputs remain decision-support tools and require qualified review before field use.

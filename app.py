@@ -1,4 +1,5 @@
 import os
+import html
 import base64
 import asyncio
 import concurrent.futures
@@ -147,38 +148,58 @@ from ui.reservoir import render_reservoir_workspace
 # ============================
 # AUTHENTICATION ENGINE
 # ============================
-async def process_authentication(mode, email_val, password_val, company_val=None):
+async def process_authentication(mode, email_val, password_val, profile=None):
+    """Register or authenticate a user using the web-app account profile."""
     email_val = email_val.strip().lower()
-    username_val = email_val.split("@")[0].strip()
+    profile = profile or {}
 
     async with AsyncSessionLocal() as session:
         if mode == "Register Account":
             try:
+                username_val = (profile.get("username") or "").strip()
+                full_name_val = (profile.get("full_name") or "").strip()
                 if len(password_val) < 8:
                     return False, "Password must be at least 8 characters long."
+                if not full_name_val:
+                    return False, "Please enter your full name."
+                if len(username_val) < 2:
+                    return False, "Username must contain at least 2 characters."
+                if "@" not in email_val or email_val.startswith("@") or email_val.endswith("@"):
+                    return False, "Please enter a valid email address."
+                if profile.get("account_type") not in {"student", "professional"}:
+                    return False, "Please choose Student or Professional."
+                if profile.get("account_type") == "student" and not (profile.get("study_level") and profile.get("programme")):
+                    return False, "Please provide your study level and programme."
+                if profile.get("account_type") == "professional" and not profile.get("job_title"):
+                    return False, "Please select your job title or specialisation."
 
                 existing = await session.execute(
                     select(UserModel).where(
-                        or_(
-                            UserModel.email == email_val,
-                            UserModel.username == username_val,
-                        )
+                        or_(UserModel.email == email_val, UserModel.username == username_val)
                     )
                 )
                 if existing.scalar_one_or_none():
-                    return False, "Email or username already registered."
+                    return False, "Email or username already registered. Please sign in or choose another."
 
-                hashed_pw = get_password_hash(password_val)
                 new_user = UserModel(
                     username=username_val,
                     email=email_val,
-                    hashed_password=hashed_pw,
+                    hashed_password=get_password_hash(password_val),
+                    # Account type personalises the workspace; it is not an authorisation role.
                     role="drilling_engineer",
-                    company_name=(company_val or "").strip(),
+                    company_name=(profile.get("organisation") or "").strip(),
+                    full_name=full_name_val,
+                    phone_number=(profile.get("phone_number") or "").strip(),
+                    country=(profile.get("country") or "").strip(),
+                    account_type=profile.get("account_type", "professional"),
+                    study_level=(profile.get("study_level") or "").strip(),
+                    programme=(profile.get("programme") or "").strip(),
+                    job_title=(profile.get("job_title") or "").strip(),
+                    sms_opt_in=bool(profile.get("sms_opt_in", False)),
                 )
                 session.add(new_user)
                 await session.commit()
-                return True, "Account registered! Please switch mode to Login."
+                return True, "Account created successfully. You can now sign in. SMS delivery will require a configured messaging provider."
             except IntegrityError:
                 await session.rollback()
                 return False, "Registration failed: email or username already exists."
@@ -195,9 +216,16 @@ async def process_authentication(mode, email_val, password_val, company_val=None
                     return True, {
                         "id": user.id,
                         "username": user.username,
+                        "full_name": getattr(user, "full_name", "") or user.username,
                         "email": user.email,
+                        "phone_number": getattr(user, "phone_number", "") or "",
                         "role": user.role,
+                        "account_type": getattr(user, "account_type", "professional") or "professional",
                         "company": user.company_name or "",
+                        "country": getattr(user, "country", "") or "",
+                        "study_level": getattr(user, "study_level", "") or "",
+                        "programme": getattr(user, "programme", "") or "",
+                        "job_title": getattr(user, "job_title", "") or "",
                     }
                 return False, "Invalid email or password."
             except Exception:
@@ -212,26 +240,69 @@ if not st.session_state.authenticated:
             {logo_html}
             <div class="main-header">PetroNexa</div>
             <div class="sub-header" style="border:none; margin-bottom:0;">
-                Enterprise Drilling Hydraulics & Diagnostic Engineering Platform
+                Petroleum Engineering Workspace
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    auth_mode = st.radio("Select Mode", ["Login", "Register Account"], horizontal=True)
+    auth_mode = st.radio("Welcome to PetroNexa", ["Login", "Register Account"], horizontal=True)
+    account_type = "professional"
+    if auth_mode == "Register Account":
+        account_type = st.radio(
+            "I am registering as",
+            ["Tertiary Student", "Working Professional"],
+            horizontal=True,
+            key="registration_account_type",
+        )
+        account_type = "student" if account_type == "Tertiary Student" else "professional"
+
     with st.form("auth_form"):
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
-        company = None
+        email = st.text_input("Email address", placeholder="you@example.com")
+        password = st.text_input("Password (minimum 8 characters)", type="password")
+        profile = {}
         if auth_mode == "Register Account":
-            company = st.text_input("Company Name", value="Enterprise Hydrocarbons Corp")
-        submit = st.form_submit_button("Submit", use_container_width=True)
+            st.caption("Create your account. Fields marked by the form are used to personalise your workspace.")
+            profile["full_name"] = st.text_input("Full name", placeholder="Your first and last name")
+            profile["username"] = st.text_input("Username", placeholder="Choose a unique username")
+            profile["phone_number"] = st.text_input("Mobile number", placeholder="Include country code, e.g. +233...")
+            profile["country"] = st.text_input("Country", value="Ghana")
+            profile["account_type"] = account_type
+            profile["organisation"] = st.text_input(
+                "University or institution" if account_type == "student" else "Company name (or Independent)",
+                placeholder="Enter your institution or company",
+            )
+            if account_type == "student":
+                profile["study_level"] = st.selectbox(
+                    "Level of study",
+                    ["Undergraduate", "Postgraduate — Master's", "Doctoral — PhD", "Diploma or other"],
+                )
+                profile["programme"] = st.text_input("Programme of study", value="Petroleum Engineering")
+                profile["job_title"] = ""
+            else:
+                profile["job_title"] = st.selectbox(
+                    "Job title or specialisation",
+                    ["Petroleum Engineer", "Drilling Engineer", "Reservoir Engineer", "Production Engineer", "Petrophysicist", "Other engineering role"],
+                )
+                profile["study_level"] = ""
+                profile["programme"] = ""
+            profile["sms_opt_in"] = st.checkbox(
+                "I agree to receive optional PetroNexa SMS updates and product announcements."
+            )
+            st.caption("SMS delivery is not active until PetroNexa connects to an SMS provider. You can leave this unchecked.")
+
+        submit_label = "Sign in" if auth_mode == "Login" else "Create account"
+        submit = st.form_submit_button(submit_label, use_container_width=True, type="primary")
         if submit:
             if not email or not password:
-                st.error("Please enter both email and password.")
+                st.error("Please enter both email address and password.")
+            elif auth_mode == "Register Account" and (not profile.get("full_name") or not profile.get("username") or not profile.get("organisation")):
+                st.error("Please complete your name, username and institution/company fields.")
+            elif auth_mode == "Register Account" and not profile.get("phone_number"):
+                st.error("Please enter a mobile number. You can manage messaging preferences later.")
             else:
                 success, response = run_async_task(
-                    process_authentication, auth_mode, email, password, company
+                    process_authentication, auth_mode, email, password, profile
                 )
                 if auth_mode == "Register Account":
                     if success:
@@ -248,7 +319,6 @@ if not st.session_state.authenticated:
     st.stop()
 
 
-
 # ============================
 # AUTHENTICATED HEADER
 # ============================
@@ -259,13 +329,16 @@ with h1:
     else:
         st.markdown("## ⛽")
 with h2:
-    user_data = st.session_state.user_info or {"username": "Engineer", "company": ""}
-    company_display = user_data.get("company") or "Enterprise Hydrocarbons"
+    user_data = st.session_state.user_info or {"username": "Engineer", "full_name": "Engineer", "company": "", "account_type": "professional"}
+    company_display = user_data.get("company") or ("Independent" if user_data.get("account_type") == "professional" else "Student")
+    profile_name = html.escape(str(user_data.get("full_name") or user_data.get("username") or "Engineer"))
+    account_label = "Tertiary Student" if user_data.get("account_type") == "student" else "Professional"
+    company_display = html.escape(str(company_display))
     st.markdown(
         f"""
         <div class="main-header" style="margin-top:0.35rem;">PetroNexa</div>
         <div class="sub-header" style="margin-bottom:0.4rem; padding-bottom:0.5rem;">
-            <i class="fas fa-user-circle"></i> {user_data.get('username')}
+            <i class="fas fa-user-circle"></i> {profile_name} ({account_label})
             &nbsp;·&nbsp;
             <i class="fas fa-building"></i> {company_display}
         </div>

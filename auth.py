@@ -17,8 +17,16 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    username: str | None = Field(default=None, max_length=80)
+    username: str | None = Field(default=None, min_length=2, max_length=80)
+    full_name: str | None = Field(default=None, max_length=150)
+    phone_number: str | None = Field(default=None, max_length=40)
+    country: str | None = Field(default=None, max_length=80)
+    account_type: str = Field(default="professional", pattern="^(student|professional)$")
     company_name: str | None = Field(default=None, max_length=150)
+    study_level: str | None = Field(default=None, max_length=80)
+    programme: str | None = Field(default=None, max_length=120)
+    job_title: str | None = Field(default=None, max_length=120)
+    sms_opt_in: bool = False
 
 
 class UserResponse(BaseModel):
@@ -27,6 +35,14 @@ class UserResponse(BaseModel):
     email: EmailStr
     role: str
     company_name: str | None = None
+    full_name: str = ""
+    phone_number: str = ""
+    country: str = ""
+    account_type: str = "professional"
+    study_level: str = ""
+    programme: str = ""
+    job_title: str = ""
+    sms_opt_in: bool = False
 
     model_config = {"from_attributes": True}
 
