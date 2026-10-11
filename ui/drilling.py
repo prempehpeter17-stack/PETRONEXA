@@ -493,8 +493,15 @@ def render_drilling_workspace(controls, user_data):
                     benchmarks = compare_cementing_results(result)
                     st.dataframe(pd.DataFrame(benchmarks), use_container_width=True)
 
-                except Exception as e:
-                    st.error(f"Cementing design error: {e}")
+                
+except Exception as e:
+    st.warning(
+        "The cementing design could not be completed. "
+        "Please review the casing, hole, interval, and slurry inputs."
+    )
+    with st.expander("Technical details (for troubleshooting)"):
+        st.code(str(e))
+
 
 
     # ---------- TAB 5: PDF EXPORT ----------
